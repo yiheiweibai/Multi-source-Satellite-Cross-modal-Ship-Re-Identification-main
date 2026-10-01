@@ -1,0 +1,54 @@
+# ============================================================
+# GPU 正式训练配置示例
+# 目标硬件：RTX 4070 Ti SUPER (12GB) / 32GB 内存 / CUDA 12.4
+# 用法：
+#   python train.py --config config/train_gpu.yaml
+# 说明：仅覆盖 default.yaml 中需要调整的字段；数据路径已在
+#   default.yaml 指向真实数据（训练 labels.csv / 初赛 task.json）。
+#   AMP 混合精度：框架当前未实现 autocast/GradScaler，暂不开启；
+#   后续支持后在训练循环中启用并可在此增加 amp: true。
+# ============================================================
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda                      # GPU 训练（不可用时自动回退 cpu）
+project_name: ship_reid_gpu
+
+# ---------- 数据（继承 default.yaml 真实数据路径） ----------
+# data_root / train_labels_csv / val_labels_csv / test_task_json 见 default.yaml，
+# 无需重复；如需独立覆盖可在此追加。
+
+# ---------- 数据加载 ----------
+num_workers: 8                   # 32GB 内存 + 12GB 显存，8 进程加载较均衡
+
+# ---------- PK 采样 ----------
+pk_p: 8                          # 每 batch 8 个身份
+pk_k: 4                          # 每身份 4 张 -> batch_size = 32
+pk_prefer_dual_modal: true
+
+# ---------- 模型 ----------
+backbone: resnet50
+pretrained: true
+share_layer: layer3
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+label_smooth: 0.1
+
+# ---------- 训练 ----------
+epochs: 120                      # 正式训练
+lr: 0.0003
+backbone_lr_scale: 0.1           # 骨干学习率 = 3e-5
+weight_decay: 0.0005
+scheduler: cosine
+warmup_epochs: 1
+ema_decay: 0.999
+resume: ""                       # 断点续训时填写 checkpoint 路径
+
+# ---------- 输出 ----------
+output_dir: outputs
+log_interval: 20
+eval_interval: 1
+tb_enabled: true
