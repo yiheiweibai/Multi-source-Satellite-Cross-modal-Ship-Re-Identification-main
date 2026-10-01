@@ -1,15 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: a88da0184087caa3b0b1fbad5b044954_4e1d644cbd7311f189c8525400393706
-    ReservedCode1: bOasgXX0A9c93CV6RRwFwQfEo2QQGdgE0Ae5giZ4ioeIVCijBBUqF3K6hwfK1EOc4Gvmj3cgDb3w0g4IDmtDeSDYLrWG5iSgCT9tvfi/5P/cNMVTYGQ5vQ6aJ5vJCNRFyQzPSQmd0gh5qZuJimk+tSVlHmd3PcqMEttXVIHvVLipj3r4+C5MtjLhRTc=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: a88da0184087caa3b0b1fbad5b044954_4e1d644cbd7311f189c8525400393706
-    ReservedCode2: bOasgXX0A9c93CV6RRwFwQfEo2QQGdgE0Ae5giZ4ioeIVCijBBUqF3K6hwfK1EOc4Gvmj3cgDb3w0g4IDmtDeSDYLrWG5iSgCT9tvfi/5P/cNMVTYGQ5vQ6aJ5vJCNRFyQzPSQmd0gh5qZuJimk+tSVlHmd3PcqMEttXVIHvVLipj3r4+C5MtjLhRTc=
----
-
-
 # 赛题06 多源卫星跨模态舰船重识别 · 代码系统框架
 
 面向 **2026 全国大数据与计算智能挑战赛 赛题06「多源卫星跨模态舰船重识别」** 的可运行工程化代码框架。
@@ -132,7 +120,7 @@ python train.py --resume outputs/checkpoints/last.pth
 
 - 训练日志：stdout + `outputs/logs/`（tensorboard）
 - checkpoint：`outputs/checkpoints/last.pth`（最新）、`outputs/checkpoints/best.pth`（验证 mAP 最优）
-- 每 epoch 结束自动在验证集评测 mAP / Recall@1/5/10
+- 每 epoch 结束自动在验证集评测 mAP / Recall\@1/5/10
 
 ### 4.2 推理（检索）
 
@@ -151,19 +139,19 @@ python evaluate.py --ckpt outputs/checkpoints/best.pth
 python evaluate.py --ckpt outputs/checkpoints/best.pth --ann data/annotations/val.json --k 1 5 10
 ```
 
-- 输出：整体 mAP / Recall@K，以及同模态（same_*）与跨模态（cross_*）子集指标
+- 输出：整体 mAP / Recall\@K，以及同模态（same\_*）与跨模态（cross\_*）子集指标
 
 ## 5. 关键设计（对应技术方案）
 
-| 模块 | 设计 |
-|---|---|
-| 骨干 | 双分支：浅层模态特定（光学/SAR 各一份，权重独立），深层共享（ResNet `layer3` 起 / ViT 前 6 个 block 特定）。可用 ImageNet 预训练权重 |
-| 特征头 | BNNeck：BN 前特征 L2 归一化用于检索，BN 后特征接分类头，解耦度量与分类 |
-| 损失 | 跨模态 SupCon（身份为正样本对）+ 难样本三元组（可自适应 margin）+ 身份分类（标签平滑），按权重加权 |
-| 训练 | PK 采样（优先双模态身份）、分层学习率（骨干 0.1×）、梯度裁剪、cosine/OneCycle 调度、ckpt 恢复、tensorboard |
-| 推理 | 余弦相似度 Top-K 排序，输出 json |
-| 评测 | mAP / Recall@K，整体 + 同模态 + 跨模态子集 |
-| 数据 | SAR 斑点滤波占位（恒等），训练时对 SAR 图模拟斑点噪声增强；数据开放后替换真实滤波 |
+| 模块  | 设计                                                                                         |
+| --- | ------------------------------------------------------------------------------------------ |
+| 骨干  | 双分支：浅层模态特定（光学/SAR 各一份，权重独立），深层共享（ResNet `layer3` 起 / ViT 前 6 个 block 特定）。可用 ImageNet 预训练权重 |
+| 特征头 | BNNeck：BN 前特征 L2 归一化用于检索，BN 后特征接分类头，解耦度量与分类                                                |
+| 损失  | 跨模态 SupCon（身份为正样本对）+ 难样本三元组（可自适应 margin）+ 身份分类（标签平滑），按权重加权                                 |
+| 训练  | PK 采样（优先双模态身份）、分层学习率（骨干 0.1×）、梯度裁剪、cosine/OneCycle 调度、ckpt 恢复、tensorboard                  |
+| 推理  | 余弦相似度 Top-K 排序，输出 json                                                                     |
+| 评测  | mAP / Recall\@K，整体 + 同模态 + 跨模态子集                                                           |
+| 数据  | SAR 斑点滤波占位（恒等），训练时对 SAR 图模拟斑点噪声增强；数据开放后替换真实滤波                                              |
 
 ## 6. 真实数据接入（已适配官方格式）
 
@@ -175,8 +163,8 @@ python evaluate.py --ckpt outputs/checkpoints/best.pth --ann data/annotations/va
 ```yaml
 # 示例：自定义 yaml（dummy_mode 必须为 false）
 dummy_mode: false
-data_root: "D:/Projects/Multi-source Satellite Cross-modal Ship Re-Identification/赛题6-初赛/训练数据"
-train_labels_csv: "D:/Projects/.../训练数据/labels.csv"   # 或 train_labels_csv: "<data_root>/labels.csv"
+data_root: "../赛题6-初赛/训练数据"   # 相对于 ship_reid_system/ 目录
+train_labels_csv: "../赛题6-初赛/训练数据/labels.csv"   # 或 train_labels_csv: "<data_root>/labels.csv"
 val_labels_csv: ""            # 不设验证集则每个 epoch 仍保存 best.pth
 auto_num_classes: true        # 自动读取 ship_id 数
 ```
@@ -187,14 +175,14 @@ python train.py --config my_train.yaml
 
 ### 6.2 推理：生成赛题提交 prediction.json
 
-`inference.py --task_json` 模式解析官方测试包 `task.json`，按 query_type 过滤候选模态
+`inference.py --task_json` 模式解析官方测试包 `task.json`，按 query\_type 过滤候选模态
 （O2S→sar、S2O→optical、O2O→optical），对每个 query 取相似度降序前 10 个不重复
-gallery image_id，生成并保存 `prediction.json`（UTF-8、顶层 JSON 对象、仅含
+gallery image\_id，生成并保存 `prediction.json`（UTF-8、顶层 JSON 对象、仅含
 `query_id -> [10 个 image_id]`），保存前自动格式自检（全覆盖/恰好10个/不重复/ID合法/模态匹配）。
 
 ```bash
 python inference.py --config my_train.yaml --ckpt outputs/checkpoints/best.pth \
-    --task_json "D:/Projects/.../赛题6-初赛/初赛测试数据/task.json" \
+    --task_json "../赛题6-初赛/初赛测试数据/task.json" \
     --out_prediction outputs/prediction.json
 ```
 
@@ -203,12 +191,12 @@ python inference.py --config my_train.yaml --ckpt outputs/checkpoints/best.pth \
 
 ### 6.3 评测：赛题方向指标
 
-`evaluate.py --submission` 对齐赛题评测：对 O2S/S2O/O2O 分别计算 R@1 与 mAP@10，
+`evaluate.py --submission` 对齐赛题评测：对 O2S/S2O/O2O 分别计算 R\@1 与 mAP\@10，
 方向得分=两者平均，综合得分=0.45×O2S+0.45×S2O+0.10×O2O。
 
 ```bash
 python evaluate.py --config my_train.yaml --submission \
-    --task "D:/Projects/.../初赛测试数据/task.json" \
+    --task "../赛题6-初赛/初赛测试数据/task.json" \
     --prediction outputs/prediction.json \
     --gt ground_truth.json     # 组织方保留的 GT；本地可用自建模拟 GT 冒烟
 ```
@@ -254,13 +242,13 @@ python train.py --config config/train_gpu.yaml
 
 ### 7.3 常见问题（FAQ）
 
-| 现象 | 排查 |
-|---|---|
-| `cuda.is_available()` 为 False | ① NVIDIA 驱动过旧：建议 ≥ 551.x（对应 CUDA 12.4），到 NVIDIA 官网更新后重启；② torch 装成了 CPU 版：卸载后按 2 节 cu124 索引重装；③ 执行环境未激活 `.venv` |
-| `setup_env.ps1` 报 `Python not found` | 安装 Python 3.8+ 并勾选 "Add Python to PATH"，重开终端再跑 |
-| 安装 torch 网络失败/超时 | 更换镜像或重跑脚本（幂等，不会重复下载已成功部分）；确认可访问 `download.pytorch.org` |
-| 显存不足（OOM） | 降低 `pk_p`/`pk_k`（如 8×4→6×4）或 `batch` 等效值；或关闭 `sar_speckle_aug` 降内存；12GB 显存下 resnet50+32 batch 通常可跑 |
-| 训练慢/卡死 | `num_workers` 8 在 32GB 内存下足够；若 CPU 瓶颈可降为 4；确认无其他进程占用 GPU（`nvidia-smi`） |
-| 驱动能跑 CUDA 但版本提示 mismatch | torch cu124 需要驱动支持 CUDA 12.x 运行时；驱动更新至 ≥ 551 即可，无需安装完整 CUDA Toolkit |
-| AMP 混合精度 | 框架当前未实现 `autocast`/`GradScaler`，`train_gpu.yaml` 未开启；后续支持后可增加 `amp: true` |
-*（内容由AI生成，仅供参考）*
+| 现象                                   | 排查                                                                                                              |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `cuda.is_available()` 为 False        | ① NVIDIA 驱动过旧：建议 ≥ 551.x（对应 CUDA 12.4），到 NVIDIA 官网更新后重启；② torch 装成了 CPU 版：卸载后按 2 节 cu124 索引重装；③ 执行环境未激活 `.venv` |
+| `setup_env.ps1` 报 `Python not found` | 安装 Python 3.8+ 并勾选 "Add Python to PATH"，重开终端再跑                                                                  |
+| 安装 torch 网络失败/超时                     | 更换镜像或重跑脚本（幂等，不会重复下载已成功部分）；确认可访问 `download.pytorch.org`                                                          |
+| 显存不足（OOM）                            | 降低 `pk_p`/`pk_k`（如 8×4→6×4）或 `batch` 等效值；或关闭 `sar_speckle_aug` 降内存；12GB 显存下 resnet50+32 batch 通常可跑              |
+| 训练慢/卡死                               | `num_workers` 8 在 32GB 内存下足够；若 CPU 瓶颈可降为 4；确认无其他进程占用 GPU（`nvidia-smi`）                                          |
+| 驱动能跑 CUDA 但版本提示 mismatch             | torch cu124 需要驱动支持 CUDA 12.x 运行时；驱动更新至 ≥ 551 即可，无需安装完整 CUDA Toolkit                                             |
+| AMP 混合精度                             | 框架当前未实现 `autocast`/`GradScaler`，`train_gpu.yaml` 未开启；后续支持后可增加 `amp: true`                                       |
+
