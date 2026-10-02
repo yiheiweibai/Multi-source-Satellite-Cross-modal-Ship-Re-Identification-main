@@ -3,9 +3,9 @@
 # 目标硬件：RTX 4070 Ti SUPER (12GB) / 32GB 内存 / CUDA 12.4
 # 用法：
 #   python train.py --config config/train_gpu.yaml
-# 说明：仅覆盖 default.yaml 中需要调整的字段；数据路径已在
-#   default.yaml 指向真实数据（训练 labels.csv / 初赛 task.json）。
-#   已启用 AMP 混合精度、EMA 权重、Warmup+Cosine 调度。
+# 说明：Config.load 只加载本文件（不自动合并 default.yaml），因此真实数据
+#   路径在下文显式列出，与 default.yaml 保持一致；已启用 AMP 混合精度、
+#   EMA 权重、Warmup+Cosine 调度。
 # ============================================================
 
 # ---------- 基础 ----------
@@ -13,9 +13,13 @@ seed: 42
 device: cuda                      # GPU 训练（不可用时自动回退 cpu）
 project_name: ship_reid_gpu
 
-# ---------- 数据（继承 default.yaml 真实数据路径） ----------
-# data_root / train_labels_csv / val_labels_csv / test_task_json 见 default.yaml，
-# 无需重复；如需独立覆盖可在此追加。
+# ---------- 数据（真实路径，与 default.yaml 保持一致） ----------
+data_root: ../赛题6-初赛/训练数据
+train_ann: ""                     # JSON 模式标注，当前用 CSV 模式，无需填写
+val_ann: ""                       # JSON 模式验证标注，当前用 CSV 模式，无需填写
+train_labels_csv: ../赛题6-初赛/训练数据/labels_train.csv
+val_labels_csv: ""                # 验证 labels.csv（留空则训练时不验证）
+test_task_json: ../赛题6-初赛/初赛测试数据/task.json
 
 # ---------- 数据加载 ----------
 num_workers: 8                   # 32GB 内存 + 12GB 显存，8 进程加载较均衡

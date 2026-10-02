@@ -22,8 +22,8 @@ class Config:
     #     image_id,ship_id,modality,image_path 的 csv，image_path 相对 csv 所在数据包根目录；
     #     非空时优先于 train_ann / val_ann。
     data_root: str = "data"
-    train_ann: str = "data/annotations/train.json"
-    val_ann: str = "data/annotations/val.json"
+    train_ann: str = ""             # JSON 模式标注（默认留空；当前使用 CSV 模式，见 train_labels_csv）
+    val_ann: str = ""               # JSON 模式验证标注（默认留空；当前使用 CSV 模式，见 val_labels_csv）
     train_labels_csv: str = ""       # 官方训练 labels.csv（非空则 CSV 模式）
     val_labels_csv: str = ""         # 验证 labels.csv（CSV 模式下为空则跳过验证）
     test_task_json: str = ""         # 初赛/复赛测试包 task.json（inference --task_json 也可指定）

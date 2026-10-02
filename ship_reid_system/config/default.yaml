@@ -11,8 +11,8 @@ project_name: ship_reid
 # CSV 模式（官方 labels.csv）：train_labels_csv / val_labels_csv 非空时优先，
 #   image_path 相对 csv 所在数据包根目录，ship_id 自动映射连续整数。
 data_root: ../赛题6-初赛/训练数据
-train_ann: data/annotations/train.json
-val_ann: data/annotations/val.json
+train_ann: ""           # JSON 模式标注，当前用 CSV 模式（train_labels_csv 非空），无需填写
+val_ann: ""             # JSON 模式验证标注，当前用 CSV 模式（val_labels_csv 可填），无需填写
 train_labels_csv: ../赛题6-初赛/训练数据/labels_train.csv
 val_labels_csv: ""      # 验证 labels.csv（CSV 模式下留空则训练时不验证）
 test_task_json: ../赛题6-初赛/初赛测试数据/task.json
