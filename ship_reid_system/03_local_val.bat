@@ -1,11 +1,11 @@
 @echo off
 chcp 65001 >nul
-REM local_val.bat - 本地验证：用训练集划分验证集评测并输出 GT 指标
+REM 03_local_val.bat - 本地验证：用训练集划分验证集评测并输出 GT 指标
 REM 前置：先运行 scripts/build_local_val.py 生成 local_val_task.json + local_val_gt.json
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-    echo [local_val] 未找到 .venv，请先运行 setup.bat 创建环境。
+    echo [local_val] 未找到 .venv，请先运行 01_setup.bat 创建环境。
     pause
     exit /b 1
 )

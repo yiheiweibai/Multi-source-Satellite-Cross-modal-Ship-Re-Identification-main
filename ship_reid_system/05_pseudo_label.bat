@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-REM pseudo_label.bat - 伪标签自训练：对测试集 gallery 打伪标签 -> 合并训练 -> 重新训练
+REM 05_pseudo_label.bat - 伪标签自训练：对测试集 gallery 打伪标签 -> 合并训练 -> 重新训练
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-    echo [pseudo] 未找到 .venv，请先运行 setup.bat 创建环境。
+    echo [pseudo] 未找到 .venv，请先运行 01_setup.bat 创建环境。
     pause
     exit /b 1
 )

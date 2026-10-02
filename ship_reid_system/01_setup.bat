@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-REM setup.bat - Double-click entry for setup_env.ps1 (Ship ReID, RTX 4070 Ti SUPER / CUDA 12.4)
+REM 01_setup.bat - Double-click entry for setup_env.ps1 (Ship ReID, RTX 4070 Ti SUPER / CUDA 12.4)
 cd /d "%~dp0"
 
 where python >nul 2>nul

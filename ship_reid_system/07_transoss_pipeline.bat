@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-REM transoss_pipeline.bat - TransOSS 全流程（数据转换 -> 微调 -> 推理+后处理 -> 提交）
+REM 07_transoss_pipeline.bat - TransOSS 全流程（数据转换 -> 微调 -> 推理+后处理 -> 提交）
 REM 前提：已克隆 https://github.com/Alioth2000/Hoss-ReID 到本脚本同级目录
 cd /d "%~dp0"
 

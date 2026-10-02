@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-REM run_all.bat - 一键全流程：构建本地验证 -> 训练 -> 本地验证 -> 生成提交结果
+REM 06_run_all.bat - 一键全流程：构建本地验证 -> 训练 -> 本地验证 -> 生成提交结果
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-    echo [run_all] 未找到 .venv，请先运行 setup.bat 创建环境。
+    echo [run_all] 未找到 .venv，请先运行 01_setup.bat 创建环境。
     pause
     exit /b 1
 )

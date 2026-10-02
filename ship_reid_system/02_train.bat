@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-REM train.bat - GPU 训练入口（RTX 4070 Ti SUPER / CUDA 12.4）
+REM 02_train.bat - GPU 训练入口（RTX 4070 Ti SUPER / CUDA 12.4）
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-    echo [train] 未找到 .venv，请先运行 setup.bat 创建环境。
+    echo [train] 未找到 .venv，请先运行 01_setup.bat 创建环境。
     pause
     exit /b 1
 )

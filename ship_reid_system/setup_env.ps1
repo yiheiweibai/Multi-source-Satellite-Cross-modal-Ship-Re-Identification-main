@@ -1,5 +1,5 @@
 # setup_env.ps1 - One-click environment setup for Ship ReID (RTX 4070 Ti SUPER / CUDA 12.4)
-# Usage: double-click setup.bat, or run from PowerShell:
+# Usage: double-click 01_setup.bat, or run from PowerShell:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_env.ps1
 # Idempotent: safe to re-run; reuses .venv and skips already-installed torch.
 $ErrorActionPreference = "Stop"

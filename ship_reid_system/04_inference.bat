@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-REM inference.bat - 生成提交用 prediction.json（TTA + 重排序 + QE）
+REM 04_inference.bat - 生成提交用 prediction.json（TTA + 重排序 + QE）
 cd /d "%~dp0"
 
 if not exist .venv\Scripts\python.exe (
-    echo [inference] 未找到 .venv，请先运行 setup.bat 创建环境。
+    echo [inference] 未找到 .venv，请先运行 01_setup.bat 创建环境。
     pause
     exit /b 1
 )
@@ -12,7 +12,7 @@ if not exist .venv\Scripts\python.exe (
 set CKPT=outputs/checkpoints/best.pth
 if not exist "%CKPT%" (
     echo [inference] 未找到 checkpoint: %CKPT%
-    echo            请先运行 train.bat 完成训练。
+    echo            请先运行 02_train.bat 完成训练。
     pause
     exit /b 1
 )
