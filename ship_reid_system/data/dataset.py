@@ -146,7 +146,7 @@ class ShipReIDDataset(Dataset):
         s = self.samples[idx]
         img = Image.open(s["image_path"]).convert("RGB")
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(img, s["modality"])
         if self.is_train and self.sar_speckle is not None and s["modality"] == 1:
             img = self.sar_speckle(img)
         return img, s["identity"], s["modality"]
@@ -194,7 +194,7 @@ class ShipReIDCSVDataset(Dataset):
         s = self.samples[idx]
         img = Image.open(s["image_path"]).convert("RGB")
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(img, s["modality"])
         if self.is_train and self.sar_speckle is not None and s["modality"] == 1:
             img = self.sar_speckle(img)
         return img, s["identity"], s["modality"]

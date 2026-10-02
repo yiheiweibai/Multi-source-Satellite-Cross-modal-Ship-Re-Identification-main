@@ -20,3 +20,5 @@ Pillow>=10.0.0
 # 可选依赖：SAR 斑点滤波（Lee/Kuan/BM3D）
 opencv-python>=4.8.0
 scipy>=1.10.0
+# Gallery 聚类（DBSCAN）
+scikit-learn>=1.3.0

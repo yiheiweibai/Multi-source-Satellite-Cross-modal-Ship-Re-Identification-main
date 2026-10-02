@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tta", action="store_true", help="水平翻转 TTA（原图+翻转特征平均）")
     p.add_argument("--rerank", action="store_true", help="k-reciprocal 重排序")
     p.add_argument("--qe", action="store_true", help="查询扩展（top-1 gallery 特征扩展 query）")
+    p.add_argument("--cluster", action="store_true", help="Gallery 聚类 + 类别中心检索")
     return p.parse_args()
 
 
@@ -98,9 +99,9 @@ def run_prediction(cfg, args) -> None:
     engine = RetrievalEngine(cfg, args.ckpt, device=args.device)
     indices = retrieve_for_submission(
         engine, query_loader, gallery_loader, task["queries"], task["gallery"], topk=args.topk,
-        tta=args.tta, rerank=args.rerank, qe=args.qe,
+        tta=args.tta, rerank=args.rerank, qe=args.qe, cluster=args.cluster,
     )
-    print(f"[后处理] TTA={args.tta}, rerank={args.rerank}, QE={args.qe}")
+    print(f"[后处理] TTA={args.tta}, rerank={args.rerank}, QE={args.qe}, cluster={args.cluster}")
     prediction = {
         task["queries"][qi]["query_id"]: [task["gallery"][gi]["image_id"] for gi in indices[qi].tolist()]
         for qi in range(len(task["queries"]))

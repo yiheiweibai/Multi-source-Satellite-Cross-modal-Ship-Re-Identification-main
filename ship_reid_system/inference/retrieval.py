@@ -22,11 +22,15 @@ class RetrievalEngine:
         # 用 checkpoint 内保存的训练配置修正架构关键字段（必须与训练一致才能正确加载权重）
         saved_cfg = state.get("cfg") if isinstance(state, dict) and "cfg" in state else None
         if isinstance(saved_cfg, dict):
-            for key in ("backbone", "share_layer", "vit_split_layer", "num_classes", "image_size"):
+            for key in ("backbone", "share_layer", "vit_split_layer", "num_classes", "image_size", "embedding_dim"):
                 if saved_cfg.get(key) is not None:
                     setattr(cfg, key, saved_cfg[key])
         self.model = build_model(cfg).to(self.device)
-        self.model.load_state_dict(state["model_state"] if "model_state" in state else state)
+        # 优先加载 EMA 权重（推理更稳定），回退到普通权重
+        if isinstance(state, dict) and state.get("ema_state") is not None:
+            self.model.load_state_dict(state["ema_state"])
+        else:
+            self.model.load_state_dict(state["model_state"] if "model_state" in state else state)
         self.model.eval()
 
     @torch.no_grad()

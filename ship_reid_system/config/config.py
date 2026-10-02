@@ -35,6 +35,13 @@ class Config:
     image_size: int = 256            # ResNet 骨干输入尺寸；ViT 骨干自动使用 224
     num_workers: int = 4
     sar_speckle_aug: bool = True     # 训练时对 SAR 图模拟斑点噪声增强
+    # 模态独立归一化（默认 ImageNet；可由 scripts/compute_stats.py 生成后填入）
+    optical_mean: tuple = (0.485, 0.456, 0.406)
+    optical_std: tuple = (0.229, 0.224, 0.225)
+    sar_mean: tuple = (0.485, 0.456, 0.406)
+    sar_std: tuple = (0.229, 0.224, 0.225)
+    # SAR 专属增强：禁用 ColorJitter，改用强度抖动 + 弹性形变
+    sar_color_jitter: bool = False
 
     # ---------- PK 采样 ----------
     pk_p: int = 8                    # 每个 batch 的身份数 P
@@ -44,14 +51,19 @@ class Config:
     # ---------- 模型 ----------
     backbone: str = "resnet50"       # resnet50 / vit_base_patch16_224
     pretrained: bool = True
+    pretrained_path: str = ""        # 自定义预训练权重路径（如 SatMAE/RemoteCLIP），空则用 ImageNet
     share_layer: str = "layer3"      # ResNet 从该层起共享（layer3 / layer4）
     vit_split_layer: int = 6         # ViT 前 N 个 block 为模态特定
     num_classes: int = 40            # 身份分类头输出（dummy 生成的身份总数）
+    embedding_dim: int = 0           # 检索特征维度（0 = 骨干输出维度，不额外投影）
 
     # ---------- 损失 ----------
     w_supcon: float = 0.5            # 跨模态监督对比损失权重
     w_triplet: float = 0.3           # 难样本三元组损失权重
     w_ce: float = 1.0                # 身份分类损失权重
+    w_arcface: float = 0.0           # ArcFace 损失权重（>0 时启用）
+    arcface_scale: float = 30.0      # ArcFace scale
+    arcface_margin: float = 0.5      # ArcFace margin
     supcon_temperature: float = 0.07
     supcon_base_temperature: float = 0.07
     triplet_margin: float = 0.3
@@ -67,6 +79,8 @@ class Config:
     total_steps: int = 0             # >0 时使用 OneCycle（按总迭代数）
     warmup_epochs: int = 1
     ema_decay: float = 0.999
+    use_ema: bool = True             # 启用 EMA 权重（推理时使用）
+    amp: bool = True                 # 启用 AMP 混合精度
     resume: str = ""                 # checkpoint 路径，非空则断点续训
 
     # ---------- 输出 ----------

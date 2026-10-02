@@ -20,6 +20,7 @@ class ComposedLoss(nn.Module):
         self.w_supcon = getattr(cfg, "w_supcon", 0.5)
         self.w_triplet = getattr(cfg, "w_triplet", 0.3)
         self.w_ce = getattr(cfg, "w_ce", 1.0)
+        self.w_arcface = getattr(cfg, "w_arcface", 0.0)
         self.label_smooth = getattr(cfg, "label_smooth", 0.1)
 
     def forward(
@@ -27,12 +28,10 @@ class ComposedLoss(nn.Module):
         ret_feat: torch.Tensor,
         logits: torch.Tensor,
         labels: torch.Tensor,
+        arcface_logits: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """返回 dict: {loss, supcon, triplet, ce}。"""
-        # SupCon：特征已 L2 归一化（head 输出）
+        """返回 dict: {loss, supcon, triplet, ce, arcface}。"""
         loss_supcon = self.supcon(ret_feat, labels)
-
-        # 三元组
         loss_triplet = self.triplet(ret_feat, labels)
 
         # 身份分类（标签平滑）
@@ -51,4 +50,16 @@ class ComposedLoss(nn.Module):
             + self.w_triplet * loss_triplet
             + self.w_ce * loss_ce
         )
-        return {"loss": total, "supcon": loss_supcon, "triplet": loss_triplet, "ce": loss_ce}
+
+        loss_arcface = torch.tensor(0.0, device=logits.device)
+        if self.w_arcface > 0 and arcface_logits is not None:
+            loss_arcface = F.cross_entropy(arcface_logits, labels)
+            total = total + self.w_arcface * loss_arcface
+
+        return {
+            "loss": total,
+            "supcon": loss_supcon,
+            "triplet": loss_triplet,
+            "ce": loss_ce,
+            "arcface": loss_arcface,
+        }

@@ -26,12 +26,12 @@ if not exist "%TASK%" (
     exit /b 1
 )
 
-echo [local_val] ????????TTA + rerank + QE?...
+echo [local_val] ????????TTA + rerank + QE + cluster?...
 .venv\Scripts\python.exe inference.py --config config/train_gpu.yaml ^
     --ckpt "%CKPT%" ^
     --task_json "%TASK%" ^
     --out_prediction outputs/local_val_pred.json ^
-    --tta --rerank --qe
+    --tta --rerank --qe --cluster
 if errorlevel 1 (
     echo.
     echo [local_val] ????

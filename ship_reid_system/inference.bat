@@ -16,12 +16,12 @@ if not exist "%CKPT%" (
     exit /b 1
 )
 
-echo [inference] ?? prediction.json?TTA + rerank + QE?...
+echo [inference] ?? prediction.json?TTA + rerank + QE + cluster?...
 .venv\Scripts\python.exe inference.py --config config/train_gpu.yaml ^
     --ckpt "%CKPT%" ^
     --task_json "../??6-??/??????/task.json" ^
     --out_prediction outputs/prediction.json ^
-    --tta --rerank --qe
+    --tta --rerank --qe --cluster
 if errorlevel 1 (
     echo.
     echo [inference] ?????????????

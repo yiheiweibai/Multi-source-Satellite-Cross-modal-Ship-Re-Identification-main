@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -88,21 +89,82 @@ def query_expansion(
     """用 top-k gallery 特征扩展 query 特征。
 
     q_new = normalize(q + alpha * mean(g_topk))
-
-    Args:
-        query_feats: (Q, D) L2 归一化
-        gallery_feats: (G, D) L2 归一化
-        topk: 取前 k 个 gallery 做扩展
-        alpha: 扩展权重
-
-    Returns:
-        expanded: (Q, D) L2 归一化的扩展 query 特征
     """
     sim = torch.matmul(query_feats, gallery_feats.t())  # (Q, G)
     topk = min(topk, gallery_feats.size(0))
     topk_idx = sim.topk(topk, dim=1).indices  # (Q, topk)
-    # 取 topk gallery 特征并平均
     topk_feats = gallery_feats[topk_idx]  # (Q, topk, D)
     avg_g = topk_feats.mean(dim=1)  # (Q, D)
     expanded = F.normalize(query_feats + alpha * avg_g, dim=1)
     return expanded
+
+
+# --------------------------------------------------------------------------- #
+# Gallery 聚类 + 类别中心检索
+# --------------------------------------------------------------------------- #
+def gallery_cluster_centers(
+    gallery_feats: torch.Tensor,
+    gallery_mods: torch.Tensor,
+    eps: float = 0.5,
+    min_samples: int = 2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """对 gallery 按模态分别做 DBSCAN 聚类，返回每个 gallery 的簇中心特征。
+
+    噪声点（簇大小=1）保留自身特征。
+
+    Returns:
+        center_feats: (G, D) 每个 gallery 所属簇的中心特征（L2 归一化）
+        cluster_ids: (G,) 每个 gallery 的簇 ID（-1 表示噪声）
+    """
+    from sklearn.cluster import DBSCAN
+
+    G, D = gallery_feats.shape
+    center_feats = gallery_feats.clone()
+    cluster_ids = torch.full((G,), -1, dtype=torch.long)
+
+    for mod in (0, 1):
+        idx = (gallery_mods == mod).nonzero(as_tuple=True)[0]
+        if idx.numel() < min_samples:
+            continue
+        feats = gallery_feats[idx].cpu().numpy()
+        # 余弦相似度转距离：1 - cos（clip 防浮点负值）
+        sim = feats @ feats.T
+        dist = np.clip(1.0 - sim, 0.0, None)
+        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric="precomputed").fit(dist)
+        labels = clustering.labels_
+        cluster_ids[idx] = torch.as_tensor(labels, dtype=torch.long)
+        # 计算每个簇的中心
+        for cid in set(labels):
+            if cid == -1:
+                continue
+            cidx = idx[labels == cid]
+            center = gallery_feats[cidx].mean(dim=0)
+            center = F.normalize(center, dim=0)
+            center_feats[cidx] = center
+    return center_feats, cluster_ids
+
+
+def cluster_retrieval(
+    query_feats: torch.Tensor,
+    gallery_feats: torch.Tensor,
+    gallery_mods: torch.Tensor,
+    eps: float = 0.5,
+    min_samples: int = 2,
+) -> torch.Tensor:
+    """基于聚类中心的检索相似度。
+
+    query 与簇中心计算相似度，命中簇后将相似度广播给簇内所有成员。
+    噪声点直接用 query-gallery 原始相似度。
+
+    Returns:
+        sim: (Q, G) 融合后的相似度矩阵
+    """
+    center_feats, cluster_ids = gallery_cluster_centers(gallery_feats, gallery_mods, eps, min_samples)
+    # query 与簇中心的相似度
+    sim_center = torch.matmul(query_feats, center_feats.t())  # (Q, G)
+    # 原始相似度
+    sim_raw = torch.matmul(query_feats, gallery_feats.t())  # (Q, G)
+    # 对噪声点（cluster == -1）用原始相似度，否则用中心相似度
+    noise_mask = (cluster_ids == -1).unsqueeze(0).expand_as(sim_raw)  # (Q, G)
+    sim = torch.where(noise_mask, sim_raw, sim_center)
+    return sim

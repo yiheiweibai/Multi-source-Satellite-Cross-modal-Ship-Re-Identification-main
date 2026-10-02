@@ -5,8 +5,7 @@
 #   python train.py --config config/train_gpu.yaml
 # 说明：仅覆盖 default.yaml 中需要调整的字段；数据路径已在
 #   default.yaml 指向真实数据（训练 labels.csv / 初赛 task.json）。
-#   AMP 混合精度：框架当前未实现 autocast/GradScaler，暂不开启；
-#   后续支持后在训练循环中启用并可在此增加 amp: true。
+#   已启用 AMP 混合精度、EMA 权重、Warmup+Cosine 调度。
 # ============================================================
 
 # ---------- 基础 ----------

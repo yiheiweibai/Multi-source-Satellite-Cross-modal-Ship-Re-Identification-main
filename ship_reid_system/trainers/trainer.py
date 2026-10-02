@@ -1,11 +1,7 @@
-"""训练/验证循环：难样本挖掘、checkpoint 保存/恢复、tensorboard 日志。
-
-支持 --resume 恢复训练；每个 epoch 结束自动评估验证集 mAP/Recall@K。
-"""
+"""训练/验证循环：难样本挖掘、EMA、AMP、checkpoint 保存/恢复。"""
 from __future__ import annotations
 
-import json
-import os
+import copy
 import time
 from pathlib import Path
 
@@ -21,6 +17,32 @@ from utils.metrics import evaluate_retrieval
 from utils.logger import get_logger
 
 
+class EMA:
+    """模型参数指数滑动平均。推理时使用 EMA 权重。"""
+
+    def __init__(self, model: nn.Module, decay: float = 0.999) -> None:
+        self.decay = decay
+        self.shadow = {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model: nn.Module) -> None:
+        for k, v in model.state_dict().items():
+            if v.dtype.is_floating_point:
+                self.shadow[k].mul_(self.decay).add_(v.detach(), alpha=1 - self.decay)
+            else:
+                self.shadow[k].copy_(v.detach())
+
+    def apply(self, model: nn.Module) -> None:
+        """将 EMA 权重复制到模型（推理前调用）。"""
+        model.load_state_dict(self.shadow)
+
+    def state_dict(self):
+        return self.shadow
+
+    def load_state_dict(self, state):
+        self.shadow = {k: v.clone() for k, v in state.items()}
+
+
 class Trainer:
     def __init__(self, cfg, model, train_loader, val_loader, device) -> None:
         self.cfg = cfg
@@ -31,6 +53,14 @@ class Trainer:
 
         self.criterion = ComposedLoss(cfg).to(device)
         self.optimizer, self.scheduler = build_optimizer_and_scheduler(model, cfg)
+
+        # EMA
+        self.use_ema = getattr(cfg, "use_ema", True)
+        self.ema = EMA(model, decay=getattr(cfg, "ema_decay", 0.999)) if self.use_ema else None
+
+        # AMP
+        self.use_amp = getattr(cfg, "amp", True) and device.type == "cuda"
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         self.logger = get_logger("trainer")
         out_dir = Path(cfg.output_dir)
@@ -57,24 +87,30 @@ class Trainer:
                 labels = labels.to(self.device)
                 modalities = modalities.to(self.device)
 
-                ret_feat, logits = self.model(imgs, modalities)
-                losses = self.criterion(ret_feat, logits, labels)
                 self.optimizer.zero_grad()
-                losses["loss"].backward()
+                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                    ret_feat, logits, arcface_logits = self.model(imgs, modalities, labels=labels)
+                    losses = self.criterion(ret_feat, logits, labels, arcface_logits=arcface_logits)
+
+                self.scaler.scale(losses["loss"]).backward()
+                self.scaler.unscale_(self.optimizer)
                 nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                if self.ema is not None:
+                    self.ema.update(self.model)
 
                 train_loss += losses["loss"].item() * imgs.size(0)
                 train_n += imgs.size(0)
                 pbar.set_postfix(loss=f"{losses['loss'].item():.4f}")
             avg_loss = train_loss / max(train_n, 1)
 
-            # 验证
+            # 验证（用 EMA 权重）
             val_metrics = {}
             if self.val_loader is not None:
                 val_metrics = self.evaluate(self.val_loader)
 
-            # 日志
             self.logger.info(
                 f"Epoch {epoch + 1}: loss={avg_loss:.4f} "
                 f"mAP={val_metrics.get('mAP', 0):.4f} "
@@ -85,7 +121,6 @@ class Trainer:
                 for k, v in val_metrics.items():
                     self.writer.add_scalar(f"val/{k}", v, epoch)
 
-            # checkpoint（无验证集时也保存 best，供推理直接使用）
             map_score = val_metrics.get("mAP", 0.0)
             self._save_checkpoint(epoch, is_best=((map_score > self.best_map) or (self.val_loader is None)))
             if map_score > self.best_map:
@@ -96,6 +131,10 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> dict:
+        # 评估时使用 EMA 权重
+        if self.ema is not None:
+            backup = {k: v.clone() for k, v in self.model.state_dict().items()}
+            self.ema.apply(self.model)
         self.model.eval()
         feats, labels, mods = [], [], []
         for imgs, lab, mod in loader:
@@ -108,6 +147,9 @@ class Trainer:
         feats = torch.cat(feats)
         labels = torch.cat(labels)
         mods = torch.cat(mods)
+        # 恢复训练权重
+        if self.ema is not None:
+            self.model.load_state_dict(backup)
         return evaluate_retrieval(feats, labels, mods, k_values=[1, 5, 10])
 
     # ---------- checkpoint ----------
@@ -115,8 +157,10 @@ class Trainer:
         state = {
             "epoch": epoch + 1,
             "model_state": self.model.state_dict(),
+            "ema_state": self.ema.state_dict() if self.ema else None,
             "optimizer_state": self.optimizer.state_dict(),
             "scheduler_state": self.scheduler.state_dict() if self.scheduler else None,
+            "scaler_state": self.scaler.state_dict() if self.use_amp else None,
             "best_map": self.best_map,
             "cfg": vars(self.cfg) if hasattr(self.cfg, "__dict__") else None,
         }
@@ -129,10 +173,14 @@ class Trainer:
     def _load_checkpoint(self, path: str) -> None:
         state = torch.load(path, map_location=self.device)
         self.model.load_state_dict(state["model_state"])
+        if self.ema is not None and state.get("ema_state"):
+            self.ema.load_state_dict(state["ema_state"])
         if "optimizer_state" in state and state["optimizer_state"]:
             self.optimizer.load_state_dict(state["optimizer_state"])
         if "scheduler_state" in state and state["scheduler_state"] and self.scheduler:
             self.scheduler.load_state_dict(state["scheduler_state"])
+        if self.use_amp and state.get("scaler_state"):
+            self.scaler.load_state_dict(state["scaler_state"])
         self.start_epoch = state.get("epoch", 0)
         self.best_map = state.get("best_map", 0.0)
         self.logger.info(f"Resumed from {path}, epoch={self.start_epoch}")

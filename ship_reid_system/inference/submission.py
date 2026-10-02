@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 
 from data import MODALITY_ID, build_test_loaders, load_task
 from data.test_dataset import QUERY_TYPE_TO_MODALITY
-from inference.postprocess import k_reciprocal_rerank, query_expansion
+from inference.postprocess import cluster_retrieval, k_reciprocal_rerank, query_expansion
 from inference.retrieval import RetrievalEngine
 
 
@@ -32,6 +32,7 @@ def retrieve_for_submission(
     tta: bool = False,
     rerank: bool = False,
     qe: bool = False,
+    cluster: bool = False,
 ) -> torch.Tensor:
     """检索并强制候选模态过滤，返回 (Q, topk) 的 gallery 全局索引（相似度降序）。
 
@@ -39,6 +40,7 @@ def retrieve_for_submission(
         tta: 水平翻转 TTA（原图+翻转特征平均）
         rerank: k-reciprocal 重排序
         qe: 查询扩展（用 top-1 gallery 特征扩展 query）
+        cluster: Gallery 聚类 + 类别中心检索
     """
     q_feats = engine.extract(query_loader, tta=tta)   # (Q, D)
     g_feats = engine.extract(gallery_loader, tta=tta)  # (G, D)
@@ -49,7 +51,9 @@ def retrieve_for_submission(
         q_feats = query_expansion(q_feats, g_feats, topk=1, alpha=0.5)
 
     # 计算相似度
-    if rerank:
+    if cluster:
+        sim = cluster_retrieval(q_feats, g_feats, g_mods, eps=0.5, min_samples=2)
+    elif rerank:
         sim = k_reciprocal_rerank(q_feats, g_feats, k1=20, k2=6, lambda_value=0.3)
     else:
         sim = torch.matmul(q_feats, g_feats.t())    # (Q, G)
@@ -80,19 +84,16 @@ def build_prediction(
     tta: bool = False,
     rerank: bool = False,
     qe: bool = False,
+    cluster: bool = False,
 ) -> Tuple[Dict[str, List[str]], List[Dict], List[Dict]]:
-    """生成提交字典 {query_id: [10 个 gallery image_id]}。
-
-    返回 (prediction, queries_subset, gallery_subset)，
-    queries_subset / gallery_subset 供 validate_prediction 做自检。
-    """
+    """生成提交字典 {query_id: [10 个 gallery image_id]}。"""
     query_loader, gallery_loader, queries, gallery = build_test_loaders(
         cfg, task_json_path, max_queries=max_queries, max_gallery=max_gallery
     )
     engine = RetrievalEngine(cfg, ckpt_path, device=device)
     indices = retrieve_for_submission(
         engine, query_loader, gallery_loader, queries, gallery, topk,
-        tta=tta, rerank=rerank, qe=qe,
+        tta=tta, rerank=rerank, qe=qe, cluster=cluster,
     )
 
     prediction: Dict[str, List[str]] = {}

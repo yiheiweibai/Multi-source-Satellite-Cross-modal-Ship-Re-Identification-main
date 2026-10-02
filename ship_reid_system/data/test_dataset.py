@@ -64,9 +64,9 @@ class QueryDataset(Dataset):
     def __getitem__(self, idx: int):
         q = self.queries[idx]
         img = Image.open(q["image_path_abs"]).convert("RGB")
-        if self.transform is not None:
-            img = self.transform(img)
         mod = MODALITY_ID[QUERY_TYPE_TO_QUERY_MODALITY[q["query_type"]]]
+        if self.transform is not None:
+            img = self.transform(img, mod)
         return img, q["query_id"], mod
 
     def query_types(self) -> List[str]:
@@ -90,9 +90,10 @@ class GalleryDataset(Dataset):
     def __getitem__(self, idx: int):
         g = self.gallery[idx]
         img = Image.open(g["image_path_abs"]).convert("RGB")
+        mod = MODALITY_ID[g["modality"]]
         if self.transform is not None:
-            img = self.transform(img)
-        return img, g["image_id"], MODALITY_ID[g["modality"]]
+            img = self.transform(img, mod)
+        return img, g["image_id"], mod
 
     def modalities(self) -> List[int]:
         return [MODALITY_ID[g["modality"]] for g in self.gallery]

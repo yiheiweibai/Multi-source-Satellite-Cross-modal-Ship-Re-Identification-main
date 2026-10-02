@@ -113,13 +113,43 @@ class DualBranchViT(nn.Module):
         return out
 
 
+def _load_pretrained_weights(model: nn.Module, pretrained_path: str) -> None:
+    """从自定义路径加载预训练权重（如 SatMAE/RemoteCLIP），自动适配键名。"""
+    import logging
+    logger = logging.getLogger("backbone")
+    state = torch.load(pretrained_path, map_location="cpu")
+    if isinstance(state, dict) and "model" in state:
+        state = state["model"]
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+    model_state = model.state_dict()
+    loaded = 0
+    skipped = []
+    for k, v in state.items():
+        # 去除常见前缀
+        kk = k
+        for prefix in ("module.", "backbone.", "encoder."):
+            if kk.startswith(prefix):
+                kk = kk[len(prefix):]
+        if kk in model_state and model_state[kk].shape == v.shape:
+            model_state[kk] = v
+            loaded += 1
+        else:
+            skipped.append(k)
+    model.load_state_dict(model_state)
+    logger.info(f"加载自定义预训练权重: {pretrained_path}，匹配 {loaded}/{len(model_state)} 层，跳过 {len(skipped)} 层")
+
+
 def build_backbone(cfg) -> nn.Module:
     name = getattr(cfg, "backbone", "resnet50")
     pretrained = getattr(cfg, "pretrained", True)
+    pretrained_path = getattr(cfg, "pretrained_path", "")
     if name.startswith("vit"):
         model = DualBranchViT(split_layer=getattr(cfg, "vit_split_layer", 6), pretrained=pretrained)
     else:
         model = DualBranchResNet(
             share_layer=getattr(cfg, "share_layer", "layer3"), pretrained=pretrained
         )
+    if pretrained_path:
+        _load_pretrained_weights(model, pretrained_path)
     return model

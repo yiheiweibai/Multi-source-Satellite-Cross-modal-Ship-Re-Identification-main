@@ -35,7 +35,7 @@ echo ============================================================
     --ckpt outputs/checkpoints/best.pth ^
     --task_json "../??6-??/????/local_val_task.json" ^
     --out_prediction outputs/local_val_pred.json ^
-    --tta --rerank --qe
+    --tta --rerank --qe --cluster
 if errorlevel 1 ( pause & exit /b 1 )
 
 .venv\Scripts\python.exe evaluate.py --submission ^
@@ -52,7 +52,7 @@ echo ============================================================
     --ckpt outputs/checkpoints/best.pth ^
     --task_json "../??6-??/??????/task.json" ^
     --out_prediction outputs/prediction.json ^
-    --tta --rerank --qe
+    --tta --rerank --qe --cluster
 if errorlevel 1 ( pause & exit /b 1 )
 
 echo.
