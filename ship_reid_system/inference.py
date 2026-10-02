@@ -48,6 +48,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out_prediction", type=str, default="", help="模式2输出 prediction.json 路径")
     p.add_argument("--topk", type=int, default=10)
     p.add_argument("--device", type=str, default="cuda")
+    # 后处理开关
+    p.add_argument("--tta", action="store_true", help="水平翻转 TTA（原图+翻转特征平均）")
+    p.add_argument("--rerank", action="store_true", help="k-reciprocal 重排序")
+    p.add_argument("--qe", action="store_true", help="查询扩展（top-1 gallery 特征扩展 query）")
     return p.parse_args()
 
 
@@ -93,8 +97,10 @@ def run_prediction(cfg, args) -> None:
 
     engine = RetrievalEngine(cfg, args.ckpt, device=args.device)
     indices = retrieve_for_submission(
-        engine, query_loader, gallery_loader, task["queries"], task["gallery"], topk=args.topk
+        engine, query_loader, gallery_loader, task["queries"], task["gallery"], topk=args.topk,
+        tta=args.tta, rerank=args.rerank, qe=args.qe,
     )
+    print(f"[后处理] TTA={args.tta}, rerank={args.rerank}, QE={args.qe}")
     prediction = {
         task["queries"][qi]["query_id"]: [task["gallery"][gi]["image_id"] for gi in indices[qi].tolist()]
         for qi in range(len(task["queries"]))

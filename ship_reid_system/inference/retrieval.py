@@ -30,12 +30,18 @@ class RetrievalEngine:
         self.model.eval()
 
     @torch.no_grad()
-    def extract(self, loader: DataLoader) -> torch.Tensor:
+    def extract(self, loader: DataLoader, tta: bool = False) -> torch.Tensor:
+        """提取特征。tta=True 时对原图与水平翻转图特征取平均。"""
         feats = []
         for imgs, _, modalities in loader:
             imgs = imgs.to(self.device)
             modalities = modalities.to(self.device)
-            feats.append(self.model.extract_feature(imgs, modalities))
+            f = self.model.extract_feature(imgs, modalities)
+            if tta:
+                imgs_flip = torch.flip(imgs, dims=[3])  # 水平翻转
+                f_flip = self.model.extract_feature(imgs_flip, modalities)
+                f = (f + f_flip) / 2
+            feats.append(f)
         return F.normalize(torch.cat(feats), dim=1)
 
     def retrieve(

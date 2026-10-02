@@ -64,14 +64,16 @@ def build_transforms(cfg, is_train: bool = True) -> Callable:
     if is_train:
         return T.Compose(
             [
-                T.Resize(resize),
+                # 随机裁剪缩放：增加尺度变化，配合 PK 重复索引生成更多样虚拟视图
+                T.RandomResizedCrop(resize, scale=(0.7, 1.0), ratio=(0.85, 1.15)),
                 T.RandomHorizontalFlip(p=0.5),
-                T.RandomRotation(degrees=5),
+                T.RandomRotation(degrees=10),
                 # 光照/强度抖动：对光学近似光照变化，对 SAR 近似辐射变化
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.02),
+                T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.15, hue=0.03),
+                T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))], p=0.2),
                 T.ToTensor(),
                 # 随机擦除模拟遮挡、并靠截断、云雾遮挡（作用于 Tensor）
-                T.RandomErasing(p=0.3, scale=(0.02, 0.15)),
+                T.RandomErasing(p=0.4, scale=(0.02, 0.2)),
                 T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ]
         )
