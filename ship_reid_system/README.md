@@ -2,6 +2,8 @@
 
 面向 **2026 全国大数据与计算智能挑战赛 赛题06「多源卫星跨模态舰船重识别」** 的可运行工程化代码框架。
 
+> **双路线并行**：本仓库自研框架 + TransOSS（ICCV 2025 SOTA）微调。两路推理均叠加 TTA/K-reciprocal/Gallery 聚类后处理，用本地验证协议对比增益。
+
 ## 1. 项目结构
 
 ```
@@ -38,7 +40,11 @@ ship_reid_system/
 │   ├── build_local_val.py   # 生成本地验证集（task.json + gt.json）
 │   ├── multi_split_val.py   # 多次随机划分验证，取均值±标准差
 │   ├── compute_stats.py     # 计算训练集各模态 mean/std
-│   └── pseudo_label.py      # 伪标签自训练
+│   ├── pseudo_label.py      # 伪标签自训练
+│   ├── transoss_prepare_data.py  # 训练数据→TransOSS bounding_box_train 格式
+│   └── transoss_inference.py     # TransOSS 推理 + 后处理 + 提交（在 Hoss-ReID 内运行）
+├── transoss_config/
+│   └── hoss_transoss_competition.yml  # TransOSS 微调配置（指向赛题数据）
 ├── outputs/                 # 训练产物（自动创建）
 │   ├── logs/                # tensorboard
 │   └── checkpoints/         # last.pth / best.pth
@@ -248,7 +254,61 @@ python train.py --config config/train_gpu.yaml \
 
 `evaluate.py --submission` 自动计算三方向指标并输出综合得分。
 
-## 8. 常见问题
+## 8. TransOSS 路线（ICCV 2025 SOTA）
+
+TransOSS 是该赛题同源数据集 HOSS ReID 的官方基线，已在大规模光学-SAR 图像对上做过对比预训练，跨模态对齐能力远强于通用预训练。
+
+### 8.1 克隆仓库
+
+```bash
+# 在本项目根目录同级克隆
+git clone https://github.com/Alioth2000/Hoss-ReID.git
+```
+
+### 8.2 下载预训练权重
+
+从 [HuggingFace](https://huggingface.co/Alioth2000/TransOSS/tree/main) 下载 `vit_b512_pre.pth`，放到 `Hoss-ReID/weights/`。
+
+### 8.3 数据转换
+
+将赛题训练数据转为 TransOSS 的 `bounding_box_train` 格式：
+
+```bash
+# 在 ship_reid_system/ 目录执行
+python scripts/transoss_prepare_data.py \
+    --csv "../赛题6-初赛/训练数据/labels_train.csv" \
+    --out_dir "../transoss_data/HOSS/bounding_box_train"
+```
+
+### 8.4 配置与微调
+
+将 `transoss_config/hoss_transoss_competition.yml` 复制到 `Hoss-ReID/configs/`，然后：
+
+```bash
+cd Hoss-ReID
+python train.py --config_file configs/hoss_transoss_competition.yml
+```
+
+### 8.5 推理 + 后处理 + 提交
+
+将 `scripts/transoss_inference.py` 复制到 `Hoss-ReID/` 根目录，执行：
+
+```bash
+python transoss_inference.py \
+    --config_file configs/hoss_transoss_competition.yml \
+    --weight logs/competition_transoss/transformer_200.pth \
+    --task_json "../赛题6-初赛/初赛测试数据/task.json" \
+    --out_prediction ../prediction_transoss.json \
+    --tta --rerank --qe --cluster
+```
+
+后处理（TTA/k-reciprocal/QE/Gallery聚类）与自研框架完全一致，可在同一份本地验证集上公平对比两路增益。
+
+### 8.6 一键脚本
+
+双击 `transoss_pipeline.bat` 按提示完成数据转换 → 微调 → 推理全流程。
+
+## 9. 常见问题
 
 | 现象 | 排查 |
 |---|---|
@@ -258,3 +318,4 @@ python train.py --config config/train_gpu.yaml \
 | AMP 报错 | 设 `amp: false` 关闭混合精度 |
 | EMA 权重缺失 | 旧 checkpoint 无 `ema_state`，自动回退普通权重 |
 | 聚类无效果 | 调整 `eps`（postprocess.py 中，默认 0.5） |
+| TransOSS 权重加载失败 | 确认 `PRETRAIN_PATH` 指向 `vit_b512_pre.pth`，且 `TRANSFORMER_TYPE: 'vit_base_patch16_224_TransOSS'` |
