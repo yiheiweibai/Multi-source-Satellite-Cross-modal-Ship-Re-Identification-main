@@ -37,7 +37,9 @@ SOLVER:
   OPTIMIZER_NAME: 'SGD'
   MAX_EPOCHS: 200
   BASE_LR: 0.0005
-  IMS_PER_BATCH: 32
+  # 16GB 显存下 ViT-B 256x128 fp32 可支撑 batch 48（约 11-13GB 占用）；
+  # 若训练中 OOM 则改回 32 或启用梯度累积
+  IMS_PER_BATCH: 48
   WARMUP_METHOD: 'linear'
   LARGE_FC_LR: False
   CHECKPOINT_PERIOD: 20

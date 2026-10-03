@@ -38,7 +38,7 @@ echo [3/4] TransOSS 推理（生成 prediction_transoss.json）...
 "..\.venv\Scripts\python.exe" transoss_inference.py ^
     --config_file configs/hoss_transoss_competition.yml ^
     --weight logs/competition_transoss/transformer_200.pth ^
-    --task_json "../赛题6-初赛/初赛测试数据/task.json" ^
+    --task_json "../../赛题6-初赛/初赛测试数据/task.json" ^
     --out_prediction ../prediction_transoss.json
 if errorlevel 1 (
     echo [07] 推理失败。
@@ -47,7 +47,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/4] 完成！prediction_transoss.json 已生成（位于项目根目录），可提交。
+echo [4/4] 完成！prediction_transoss.json 已生成（位于 ship_reid_system 目录，即 07 脚本所在目录），可提交。
 echo     若修复后的后处理（TTA/rerank/QE）在本地验证有正增益，可追加参数重跑：
 echo       --tta --rerank --qe
 pause

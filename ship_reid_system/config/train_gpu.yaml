@@ -1,6 +1,6 @@
 # ============================================================
 # GPU 正式训练配置示例
-# 目标硬件：RTX 4070 Ti SUPER (12GB) / 32GB 内存 / CUDA 12.4
+# 目标硬件：RTX 4070 Ti SUPER (16GB) / 32GB 内存 / CUDA 12.4
 # 用法：
 #   python train.py --config config/train_gpu.yaml
 # 说明：Config.load 只加载本文件（不自动合并 default.yaml），因此真实数据
@@ -25,8 +25,11 @@ test_task_json: ../赛题6-初赛/初赛测试数据/task.json
 num_workers: 8                   # 32GB 内存 + 16GB 显存，8 进程加载较均衡
 
 # ---------- PK 采样 ----------
-pk_p: 8                          # 每 batch 8 个身份
-pk_k: 4                          # 每身份 4 张 -> batch_size = 32
+# 16GB 显存下 ResNet50 双分支 256x256 + AMP 可支撑 batch 48~64
+pk_p: 24                         # 每 batch 24 个身份
+pk_k: 2                          # 每身份 2 张 -> batch_size = 48
+# pk_k=2 理由：赛题 90% 身份仅双模态各 1 张（O1+S1），pk_k=4 需补重复样本；
+# pk_k=2 恰好构成跨模态正对（每身份 O1+S1 各 1 张），与跨模态损失天然匹配
 pk_prefer_dual_modal: true
 
 # ---------- 模型 ----------
