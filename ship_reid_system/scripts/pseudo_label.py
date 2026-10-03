@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ckpt", type=str, required=True, help="训练好的 checkpoint")
     p.add_argument("--train_csv", type=str, required=True, help="训练集 labels.csv")
     p.add_argument("--task_json", type=str, required=True, help="测试集 task.json")
-    p.add_argument("--out_csv", type=str, required=True, help="输出伪标签 CSV 路径")
+    p.add_argument("--out_csv", type=str, default="outputs/pseudo/labels_pseudo.csv", help="输出伪标签 CSV 路径（默认 outputs/pseudo/，避免写回官方数据目录造成路径混乱）")
     p.add_argument("--threshold", type=float, default=0.85, help="相似度阈值（仅保留高于此值的伪标签）")
     p.add_argument("--config", type=str, default="config/default.yaml")
     p.add_argument("--device", type=str, default="cuda")
@@ -84,6 +84,7 @@ def main() -> None:
     # task.json 中 gallery 的 image_path 相对 task.json 所在目录
     task_dir = Path(args.task_json).parent
     out_dir = Path(args.out_csv).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
     for gi, g in enumerate(gallery):
         conf = float(max_sim[gi])
         if conf < args.threshold:

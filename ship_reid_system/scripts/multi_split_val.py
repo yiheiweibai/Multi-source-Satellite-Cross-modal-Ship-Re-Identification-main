@@ -98,7 +98,7 @@ def run_eval(ckpt: str, task_path: Path, gt_path: Path, post_flags: list[str]) -
         "--ckpt", ckpt, "--task_json", str(task_path), "--out_prediction", str(pred_path),
     ] + post_flags
     print(f"  [推理] seed={task_path.stem}")
-    r = subprocess.run(cmd_inf, cwd=repo, capture_output=True, text=True)
+    r = subprocess.run(cmd_inf, cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         print(r.stdout[-500:], r.stderr[-500:])
         return {}
@@ -106,7 +106,7 @@ def run_eval(ckpt: str, task_path: Path, gt_path: Path, post_flags: list[str]) -
         str(py), "evaluate.py", "--submission",
         "--prediction", str(pred_path), "--task", str(task_path), "--gt", str(gt_path),
     ]
-    r = subprocess.run(cmd_eval, cwd=repo, capture_output=True, text=True)
+    r = subprocess.run(cmd_eval, cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         print(r.stdout[-500:], r.stderr[-500:])
         return {}
@@ -155,9 +155,10 @@ def main() -> None:
     print("=" * 60)
     import statistics
     for d in ("O2S", "S2O", "O2O", "overall"):
-        vals = [r.get(d, {}).get("score" if d != "overall" else "overall", 0) for r in all_results]
         if d == "overall":
             vals = [r.get("overall", 0) for r in all_results]
+        else:
+            vals = [r.get(d, {}).get("score", 0) for r in all_results]
         if vals:
             print(f"{d:<8} 综合得分: {statistics.mean(vals):.4f} +/- {statistics.stdev(vals):.4f}")
     print("=" * 60)

@@ -181,10 +181,14 @@ def main() -> None:
     print(f"模型加载完成: {args.weight}")
 
     MOD_ID = {"optical": 0, "sar": 1}
-    QTYPE_TO_MOD = {"O2S": "sar", "S2O": "optical", "O2O": "optical"}
+    # query_type -> query 自身模态（特征提取用；修复：之前误用目标候选模态，
+    # 导致 O2S/S2O 的 query 用错 cam 分支，TransOSS 的 SSE 依赖 cam_label）
+    QTYPE_TO_QUERY_MOD = {"O2S": "optical", "S2O": "sar", "O2O": "optical"}
+    # query_type -> 目标候选模态（候选过滤用）
+    QTYPE_TO_TARGET_MOD = {"O2S": "sar", "S2O": "optical", "O2O": "optical"}
 
     q_paths = [q["image_path_abs"] for q in queries]
-    q_mods = [MOD_ID[QTYPE_TO_MOD[q["query_type"]]] for q in queries]
+    q_mods = [MOD_ID[QTYPE_TO_QUERY_MOD[q["query_type"]]] for q in queries]
     g_paths = [g["image_path_abs"] for g in gallery]
     g_mods = [MOD_ID[g["modality"]] for g in gallery]
     g_mods_t = torch.tensor(g_mods, dtype=torch.long)
@@ -195,22 +199,38 @@ def main() -> None:
     g_feats = extract_features(model, g_paths, g_mods, cfg, device, args.tta)
     print(f"q_feats: {q_feats.shape}, g_feats: {g_feats.shape}")
 
-    if args.qe:
-        q_feats = query_expansion(q_feats, g_feats)
+    # 后处理按目标候选模态分组执行（避免跨模态污染，与自研框架一致）
+    sim = torch.zeros(q_feats.size(0), g_feats.size(0), dtype=torch.float32)
+    for mod in (0, 1):
+        cand = (g_mods_t == mod).nonzero(as_tuple=True)[0]
+        if cand.numel() == 0:
+            continue
+        g_mod_feats = g_feats[cand]
+        q_work = q_feats
+        if args.qe:
+            q_work = query_expansion(q_work, g_mod_feats)
+        if args.cluster:
+            sim[:, cand] = gallery_cluster(
+                q_work, g_mod_feats,
+                torch.full((g_mod_feats.size(0),), mod, dtype=torch.long),
+                eps=args.cluster_eps,
+            )
+        elif args.rerank:
+            sim[:, cand] = k_reciprocal_rerank(q_work, g_mod_feats)
+        else:
+            sim[:, cand] = torch.matmul(q_work, g_mod_feats.t())
 
-    if args.cluster:
-        sim = gallery_cluster(q_feats, g_feats, g_mods_t, eps=args.cluster_eps)
-    elif args.rerank:
-        sim = k_reciprocal_rerank(q_feats, g_feats)
-    else:
-        sim = torch.matmul(q_feats, g_feats.t())
-
-    # 按 query_type 过滤候选模态
+    # 按 query_type 过滤候选模态，并排除 query 自身图像（防御本地验证协议重叠）
     prediction = {}
+    g_abs = [str(Path(g["image_path_abs"]).resolve()) for g in gallery]
     for qi, q in enumerate(queries):
-        target_mod = QTYPE_TO_MOD[q["query_type"]]
+        target_mod = QTYPE_TO_TARGET_MOD[q["query_type"]]
         cand = [i for i, g in enumerate(gallery) if g["modality"] == target_mod]
-        top = sim[qi, cand].topk(10).indices.tolist()
+        q_abs = str(Path(q["image_path_abs"]).resolve())
+        cand = [i for i in cand if g_abs[i] != q_abs]
+        if len(cand) < 10:
+            raise RuntimeError(f"query {q['query_id']} 候选仅 {len(cand)} 个，不足 10")
+        top = sim[qi, torch.tensor(cand)].topk(10).indices.tolist()
         prediction[q["query_id"]] = [gallery[cand[t]]["image_id"] for t in top]
 
     with open(args.out_prediction, "w", encoding="utf-8") as f:

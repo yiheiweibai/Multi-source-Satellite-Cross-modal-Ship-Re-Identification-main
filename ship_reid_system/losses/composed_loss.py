@@ -31,6 +31,12 @@ class ComposedLoss(nn.Module):
         arcface_logits: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """返回 dict: {loss, supcon, triplet, ce, arcface}。"""
+        # AMP 兼容：loss 统一在 fp32 下计算，规避 autocast 下半精度数值不稳
+        ret_feat = ret_feat.float()
+        logits = logits.float()
+        if arcface_logits is not None:
+            arcface_logits = arcface_logits.float()
+
         loss_supcon = self.supcon(ret_feat, labels)
         loss_triplet = self.triplet(ret_feat, labels)
 

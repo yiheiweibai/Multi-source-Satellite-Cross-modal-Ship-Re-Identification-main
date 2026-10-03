@@ -22,3 +22,13 @@ opencv-python>=4.8.0
 scipy>=1.10.0
 # Gallery 聚类（DBSCAN）
 scikit-learn>=1.3.0
+
+# ============================================================
+# TransOSS (Hoss-ReID) 运行必需依赖
+# 在另一台机器运行开源模型前，需先 git clone https://github.com/Alioth2000/Hoss-ReID
+# 并确保以下包已安装（01_setup.bat 会随 requirements.txt 自动安装）：
+# ============================================================
+# TransOSS transformer 模块（MIE/SSE 位置编码）依赖 einops
+einops>=0.7.0
+# TransOSS 官方 config 系统（cfg.merge_from_file）依赖 yacs
+yacs>=0.1.8

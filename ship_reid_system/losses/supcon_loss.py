@@ -38,9 +38,10 @@ class SupConLoss(nn.Module):
         logits_max, _ = torch.max(sim, dim=1, keepdim=True)
         logits = sim - logits_max.detach()
 
-        # 对数分母：除自身外的所有样本
+        # 对数分母：除自身外的所有样本（经典 SupCon 分母排除自身；减去 e^0=1 的自身项）
         exp_logits = torch.exp(logits)
-        log_prob = logits - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-12)
+        denom = (exp_logits.sum(dim=1, keepdim=True) - 1.0).clamp(min=1e-12)
+        log_prob = logits - torch.log(denom)
 
         # 分子：正样本对数概率均值
         mask_sum = mask.sum(dim=1)

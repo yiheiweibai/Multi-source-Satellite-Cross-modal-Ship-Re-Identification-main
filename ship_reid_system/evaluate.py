@@ -75,6 +75,11 @@ def main() -> None:
         ensure_dummy_data(cfg)
 
     ann = args.ann or cfg.val_ann
+    if not ann:
+        raise SystemExit(
+            "模式1 需要评测标注：请传 --ann 或配置 val_ann。"
+            "CSV 模式下 val_ann 为空（评测请用 evaluate.py --submission 对 prediction.json 评分）。"
+        )
     ds = ShipReIDDataset(ann, transform=build_transforms(cfg, is_train=False), is_train=False)
     loader = DataLoader(ds, batch_size=64, shuffle=False, num_workers=cfg.num_workers)
 

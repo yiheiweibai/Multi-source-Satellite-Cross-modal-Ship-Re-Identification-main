@@ -70,10 +70,13 @@ def evaluate_retrieval(
         out[f"R{k}"] = 0.0
 
     # 整体：每行查询在全部样本中检索（候选标签 2D 广播，便于统一处理）
+    # 排除查询自身（对角线），避免自匹配造成指标虚高
+    sim_eval = sim.clone()
+    sim_eval.fill_diagonal_(float("-inf"))
     gallery_all = labels.unsqueeze(0).expand(labels.size(0), labels.size(0))
-    out["mAP"] = mean_average_precision(sim, labels, gallery_all)
+    out["mAP"] = mean_average_precision(sim_eval, labels, gallery_all)
     for k in k_values:
-        out[f"R{k}"] = recall_at_k(sim, labels, gallery_all, k)
+        out[f"R{k}"] = recall_at_k(sim_eval, labels, gallery_all, k)
 
     # 子集：同模态（查询与候选模态一致，排除自身）与跨模态（模态不一致）
     for name, same_modal in (("same", True), ("cross", False)):

@@ -22,7 +22,7 @@ val_labels_csv: ""                # 验证 labels.csv（留空则训练时不验
 test_task_json: ../赛题6-初赛/初赛测试数据/task.json
 
 # ---------- 数据加载 ----------
-num_workers: 8                   # 32GB 内存 + 12GB 显存，8 进程加载较均衡
+num_workers: 8                   # 32GB 内存 + 16GB 显存，8 进程加载较均衡
 
 # ---------- PK 采样 ----------
 pk_p: 8                          # 每 batch 8 个身份

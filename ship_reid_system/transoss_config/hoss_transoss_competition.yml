@@ -25,6 +25,9 @@ INPUT:
   PIXEL_STD: [0.229, 0.224, 0.225]
 DATASETS:
   NAMES: ('HOSS')
+  # 相对路径基准 = 运行 transoss_inference.py 时的当前工作目录（TransOSS 仓库根目录）。
+  # 若 transoss_data 与 TransOSS 仓库不在同级，必须改为绝对路径，
+  # 例如 ('D:/Projects/transoss_data')，否则会静默找不到数据。
   ROOT_DIR: ('../transoss_data')     # 指向 transoss_prepare_data.py 输出的父目录
 DATALOADER:
   SAMPLER: 'softmax_triplet'

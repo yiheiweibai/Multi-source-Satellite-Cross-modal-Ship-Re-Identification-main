@@ -46,23 +46,38 @@ def retrieve_for_submission(
     g_feats = engine.extract(gallery_loader, tta=tta)  # (G, D)
     g_mods = torch.as_tensor([MODALITY_ID[g["modality"]] for g in gallery], dtype=torch.long)
 
-    # 查询扩展（在重排序之前）
-    if qe:
-        q_feats = query_expansion(q_feats, g_feats, topk=1, alpha=0.5)
-
-    # 计算相似度
-    if cluster:
-        sim = cluster_retrieval(q_feats, g_feats, g_mods, eps=0.5, min_samples=2)
-    elif rerank:
-        sim = k_reciprocal_rerank(q_feats, g_feats, k1=20, k2=6, lambda_value=0.3)
-    else:
-        sim = torch.matmul(q_feats, g_feats.t())    # (Q, G)
+    # 后处理一律按目标候选模态分组执行（关键修复）：
+    # O2O/S2O 的候选模态是 optical、O2S 是 sar；QE/rerank 若在全模态 gallery 上运行，
+    # query 特征会被异模态 gallery 干扰（如光学 query 被 SAR 图扩展/重排），
+    # 正确项被挤出 top1（本地验证 O2O R@1=0 的根因）。
+    sim = torch.zeros(q_feats.size(0), g_feats.size(0), device=q_feats.device, dtype=torch.float32)
+    for mod_id in (0, 1):
+        mask = g_mods == mod_id
+        cand = mask.nonzero().squeeze(1)
+        if cand.numel() == 0:
+            continue
+        g_mod_feats = g_feats[cand]                     # (G_m, D)
+        q_work = q_feats
+        if qe:
+            q_work = query_expansion(q_work, g_mod_feats, topk=1, alpha=0.5)
+        if cluster:
+            sim[:, cand] = cluster_retrieval(
+                q_work, g_mod_feats, g_mods[mask], eps=0.5, min_samples=2,
+            )
+        elif rerank:
+            sim[:, cand] = k_reciprocal_rerank(q_work, g_mod_feats, k1=20, k2=6, lambda_value=0.3)
+        else:
+            sim[:, cand] = torch.matmul(q_work, g_mod_feats.t())
 
     indices = torch.full((q_feats.size(0), topk), -1, dtype=torch.long)
+    # gallery 绝对路径（用于排除 query 自身图像；官方 task 无重叠，本地验证协议可能重叠）
+    g_paths = [str(Path(g.get("image_path_abs") or g["image_path"]).resolve()) for g in gallery]
     for qi, query in enumerate(queries):
         target_mod = QUERY_TYPE_TO_MODALITY[query["query_type"]]
         mask = g_mods == MODALITY_ID[target_mod]
         cand = mask.nonzero().squeeze(1)
+        q_path = str(Path(query.get("image_path_abs") or query["image_path"]).resolve())
+        cand = cand[[gp != q_path for gp in (g_paths[i] for i in cand.tolist())]]
         if cand.numel() < topk:
             raise RuntimeError(
                 f"query {query['query_id']} 目标模态候选仅 {cand.numel()} 个，不足 {topk}"
