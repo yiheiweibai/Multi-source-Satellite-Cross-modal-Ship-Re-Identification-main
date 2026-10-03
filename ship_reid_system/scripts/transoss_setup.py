@@ -140,7 +140,7 @@ def main() -> int:
         print(f"  权重已存在: {WEIGHT}")
     else:
         print(f"  [提示] 未找到预训练权重: {WEIGHT}")
-        print("         请从 TransOSS 官方渠道下载 vit_b512_pre.pth（GitHub: Alioth2000/Hoss-ReID README 中给出的下载链接，通常托管在 HuggingFace），")
+        print("         请从 TransOSS 官方渠道下载 vit_b512_pre.pth（GitHub: Alioth2000/Hoss-ReID README；官方数据与预训练权重托管在 Zenodo: https://zenodo.org/records/15860212），")
         print("         下载后放到该路径即可。没有权重时微调将退化为 ImageNet 随机初始化，精度显著下降。")
 
     print("\n==== 准备完成 ====")
@@ -150,7 +150,7 @@ def main() -> int:
     print(f"  cd /d \"{HOSS}\"")
     print("  ..\\.venv\\Scripts\\python.exe train.py --config_file configs/hoss_transoss_competition.yml")
     print("  ..\\.venv\\Scripts\\python.exe transoss_inference.py --config_file configs/hoss_transoss_competition.yml \\")
-    print("      --weight logs/competition_transoss/transformer_200.pth --task_json \"../赛题6-初赛/初赛测试数据/task.json\" \\")
+    print("      --weight logs/competition_transoss/transformer_200.pth --task_json \"../../赛题6-初赛/初赛测试数据/task.json\" \\")
     print("      --out_prediction ../prediction_transoss.json")
     return 0
 

@@ -6,7 +6,7 @@
     python transoss_inference.py \
         --config_file configs/hoss_transoss.yml \
         --weight weights/HOSS_TransOSS.pth \
-        --task_json ../赛题6-初赛/初赛测试数据/task.json \
+        --task_json ../../赛题6-初赛/初赛测试数据/task.json \
         --out_prediction prediction.json \
         --tta --rerank --qe --cluster
 
@@ -173,7 +173,7 @@ def main() -> None:
     # 模型
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     # 用训练集类别数创建模型（加载权重时分类头会被忽略，只取特征提取部分）
-    train_loader, _, _, _, num_query, num_classes, camera_num = make_dataloader(cfg)
+    train_loader, _, _, num_query, num_classes, camera_num = make_dataloader(cfg)
     model = make_model(cfg, num_class=num_classes, camera_num=camera_num)
     model.load_param(args.weight)
     model = model.to(device)
