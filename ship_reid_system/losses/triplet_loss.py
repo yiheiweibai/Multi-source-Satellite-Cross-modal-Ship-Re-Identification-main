@@ -2,6 +2,7 @@
 
 - TripletLoss: 经典 batch-hard 三元组（欧氏距离）
 - HardMiningTripletLoss: 难样本挖掘版，提供 margin 与自适应 margin 选项
+- cross_modal_hard_triplet: 双向跨模态 hard mining 函数（O→S 与 S→O）
 """
 from __future__ import annotations
 
@@ -68,3 +69,54 @@ class HardMiningTripletLoss(nn.Module):
         if valid.sum() == 0:
             return torch.tensor(0.0, device=features.device)
         return loss[valid].mean()
+
+
+def cross_modal_hard_triplet(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    modalities: torch.Tensor,
+    margin: float = 0.3,
+) -> torch.Tensor:
+    """双向跨模态 hard mining 三元组损失（可复用函数）。
+
+    O→S 方向：anchor=光学样本，positive=同身份 SAR 中距离最近者，
+              negative=不同身份 SAR 中距离最近者；
+    S→O 方向对称构造。某身份缺另一模态样本时该 anchor 跳过。
+    两个方向各自求均值后按有效方向数平均。
+    """
+    device = features.device
+    o_mask = modalities == 0
+    s_mask = modalities == 1
+    o_feat, o_lab = features[o_mask], labels[o_mask]
+    s_feat, s_lab = features[s_mask], labels[s_mask]
+    if o_feat.size(0) == 0 or s_feat.size(0) == 0:
+        return features.new_tensor(0.0)
+
+    dist = torch.cdist(o_feat, s_feat, p=2)  # (No, Ns)
+    same = o_lab.unsqueeze(1) == s_lab.unsqueeze(0)  # (No, Ns)
+
+    big = torch.full_like(dist, 1e9)
+    # O→S
+    hard_pos_os = torch.where(same, dist, big).amin(dim=1)
+    hard_neg_os = torch.where(~same, dist, big).amin(dim=1)
+    valid_os = (same.sum(dim=1) > 0) & (~same).any(dim=1)
+    if valid_os.sum() > 0:
+        loss_os = F.relu(hard_pos_os - hard_neg_os + margin)[valid_os].mean()
+    else:
+        loss_os = features.new_tensor(0.0)
+
+    # S→O
+    dist_so = dist.t()
+    same_so = same.t()
+    hard_pos_so = torch.where(same_so, dist_so, big.t()).amin(dim=1)
+    hard_neg_so = torch.where(~same_so, dist_so, big.t()).amin(dim=1)
+    valid_so = (same_so.sum(dim=1) > 0) & (~same_so).any(dim=1)
+    if valid_so.sum() > 0:
+        loss_so = F.relu(hard_pos_so - hard_neg_so + margin)[valid_so].mean()
+    else:
+        loss_so = features.new_tensor(0.0)
+
+    n_dir = (valid_os.sum() > 0).float() + (valid_so.sum() > 0).float()
+    if n_dir == 0:
+        return features.new_tensor(0.0)
+    return (loss_os + loss_so) / n_dir

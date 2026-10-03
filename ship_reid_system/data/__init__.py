@@ -6,7 +6,7 @@ from .dataset import (
     load_annotation,
     load_labels_csv,
 )
-from .sampler import PKSampler
+from .sampler import PKSampler, CrossModalPKSampler
 from .transforms import build_transforms, SimulateSpeckle
 from .dummy import generate_dummy_data, ensure_dummy_data
 from .test_dataset import (

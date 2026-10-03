@@ -100,7 +100,9 @@ def build_loaders(cfg):
             is_train=False,
         )
 
-    sampler = PKSampler(
+    # 采样器：pk_sampler=cross_modal 时使用模态均衡 CrossModalPKSampler（默认 pk）
+    sampler_cls = CrossModalPKSampler if getattr(cfg, "pk_sampler", "pk") == "cross_modal" else PKSampler
+    sampler = sampler_cls(
         train_ds.labels(),
         p=cfg.pk_p,
         k=cfg.pk_k,

@@ -40,6 +40,14 @@ w_triplet: 0.3
 w_ce: 1.0
 label_smooth: 0.1
 
+# ---------- 实验开关（第一阶段跨模态特征学习，默认全部关闭/不启用） ----------
+w_cm_infonce: 0.0              # 跨模态 InfoNCE 权重（>0 时启用）
+w_cm_triplet: 0.0              # 跨模态 hard triplet 权重（>0 时启用）
+cm_temperature: 0.07           # 跨模态 InfoNCE 温度
+cm_margin: 0.3                 # 跨模态 triplet margin
+modality_projection: false     # 模态特定投影头（true 时使用 ModalityAwareHead）
+pk_sampler: cross_modal        # 采样器: pk=旧版, cross_modal=模态均衡（如需严格复现旧采样改为 pk）
+
 # ---------- 训练 ----------
 epochs: 120                      # 正式训练
 lr: 0.0003

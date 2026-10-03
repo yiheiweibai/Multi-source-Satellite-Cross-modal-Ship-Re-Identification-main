@@ -90,7 +90,11 @@ class Trainer:
                 self.optimizer.zero_grad()
                 with torch.cuda.amp.autocast(enabled=self.use_amp):
                     ret_feat, logits, arcface_logits = self.model(imgs, modalities, labels=labels)
-                    losses = self.criterion(ret_feat, logits, labels, arcface_logits=arcface_logits)
+                    losses = self.criterion(
+                        ret_feat, logits, labels,
+                        modalities=modalities,
+                        arcface_logits=arcface_logits,
+                    )
 
                 self.scaler.scale(losses["loss"]).backward()
                 self.scaler.unscale_(self.optimizer)
