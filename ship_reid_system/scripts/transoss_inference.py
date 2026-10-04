@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight", type=str, required=True, help="fine-tuned TransOSS weights")
     p.add_argument("--task_json", type=str, required=True, help="赛题 task.json")
     p.add_argument("--out_prediction", type=str, default="prediction.json")
+    p.add_argument("--save_sim", type=str, default="", help="导出 sim.pt/meta.json 的目录（跨模型融合用）")
     p.add_argument("--tta", action="store_true", help="水平翻转 TTA")
     p.add_argument("--rerank", action="store_true", help="k-reciprocal 重排序")
     p.add_argument("--qe", action="store_true", help="查询扩展")
@@ -229,30 +230,55 @@ def main() -> None:
                                preprocess=args.preprocess, sar_colormap=args.sar_colormap)
     print(f"q_feats: {q_feats.shape}, g_feats: {g_feats.shape}")
 
-    # 后处理按目标候选模态分组执行（避免跨模态污染，与自研框架一致）
+    # 后处理按 query_type 分组执行（修复跨模态污染）：
+    # rerank/QE 仅在目标候选模态子集内进行；O2O 额外排除 query 自身图像。
     sim = torch.zeros(q_feats.size(0), g_feats.size(0), dtype=torch.float32)
-    for mod in (0, 1):
-        cand = (g_mods_t == mod).nonzero(as_tuple=True)[0]
-        if cand.numel() == 0:
+    g_abs = [str(Path(g["image_path_abs"]).resolve()) for g in gallery]
+    q_abs = [str(Path(q["image_path_abs"]).resolve()) for q in queries]
+    for qtype, target_mod in QTYPE_TO_TARGET_MOD.items():
+        q_idx = [i for i, q in enumerate(queries) if q["query_type"] == qtype]
+        if not q_idx:
             continue
-        g_mod_feats = g_feats[cand]
-        q_work = q_feats
+        cand = [i for i, g in enumerate(gallery) if g["modality"] == target_mod]
+        if qtype == "O2O":
+            own = {q_abs[j] for j in q_idx}
+            cand = [i for i in cand if g_abs[i] not in own]
+        if len(cand) == 0:
+            continue
+        cand_t = torch.tensor(cand, dtype=torch.long)
+        g_mod_feats = g_feats[cand_t]
+        q_work = q_feats[torch.as_tensor(q_idx, dtype=torch.long)]
         if args.qe:
             q_work = query_expansion(q_work, g_mod_feats)
         if args.cluster:
-            sim[:, cand] = gallery_cluster(
+            sim[torch.as_tensor(q_idx, dtype=torch.long)[:, None], cand_t] = gallery_cluster(
                 q_work, g_mod_feats,
-                torch.full((g_mod_feats.size(0),), mod, dtype=torch.long),
+                torch.full((g_mod_feats.size(0),), 1 if target_mod == "sar" else 0, dtype=torch.long),
                 eps=args.cluster_eps,
             )
         elif args.rerank:
-            sim[:, cand] = k_reciprocal_rerank(q_work, g_mod_feats)
+            sim[torch.as_tensor(q_idx, dtype=torch.long)[:, None], cand_t] = k_reciprocal_rerank(q_work, g_mod_feats)
         else:
-            sim[:, cand] = torch.matmul(q_work, g_mod_feats.t())
+            sim[torch.as_tensor(q_idx, dtype=torch.long)[:, None], cand_t] = torch.matmul(q_work, g_mod_feats.t())
+
+    # 保存相似度矩阵 + 元数据（跨模型融合用）
+    if args.save_sim:
+        from pathlib import Path as _P
+        out_dir = _P(args.save_sim)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "queries": [{"query_id": q["query_id"], "query_type": q["query_type"],
+                         "image_path": q["image_path"]} for q in queries],
+            "gallery": [{"image_id": g["image_id"], "modality": g["modality"],
+                         "image_path": g["image_path"]} for g in gallery],
+        }
+        torch.save(sim, out_dir / "sim.pt")
+        with open(out_dir / "meta.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"sim/meta 已保存: {out_dir}")
 
     # 按 query_type 过滤候选模态，并排除 query 自身图像（防御本地验证协议重叠）
     prediction = {}
-    g_abs = [str(Path(g["image_path_abs"]).resolve()) for g in gallery]
     for qi, q in enumerate(queries):
         target_mod = QTYPE_TO_TARGET_MOD[q["query_type"]]
         cand = [i for i, g in enumerate(gallery) if g["modality"] == target_mod]
