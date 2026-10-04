@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cluster", action="store_true", help="Gallery 聚类")
     p.add_argument("--cluster_eps", type=float, default=0.5)
     p.add_argument("--device", type=str, default="cuda")
+    p.add_argument("--preprocess", action="store_true", help="SAR 图像预处理（去斑+CLAHE，可选伪彩）")
+    p.add_argument("--sar_colormap", action="store_true", help="SAR 预处理后应用 JET 伪彩转 RGB（需配合 --preprocess）")
     return p.parse_args()
 
 
@@ -56,9 +58,33 @@ def load_task(task_path: str):
     return task
 
 
+def apply_sar_preprocess(img, use_colormap: bool = False):
+    """SAR 图像增强（transform 前）：灰度 → fastNlMeansDenoising(h=10) 去斑 → CLAHE(clipLimit=2.0,(8,8)) → 可选 JET 伪彩。
+
+    cv2 缺失时打印警告并返回原图，不影响流程。
+    """
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+    except Exception as e:  # pragma: no cover
+        print(f"[preprocess] cv2 不可用，跳过 SAR 预处理: {e}")
+        return img
+    gray = np.array(img.convert("L"))
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=10)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
+    if use_colormap:
+        rgb = cv2.applyColorMap(enhanced, cv2.COLORMAP_JET)
+    else:
+        rgb = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+    return Image.fromarray(rgb)
+
+
 @torch.no_grad()
-def extract_features(model, image_paths: list[str], modalities: list[int], cfg, device, tta: bool):
-    """用 TransOSS 模型提取特征。modalities: 0=optical, 1=sar。"""
+def extract_features(model, image_paths: list[str], modalities: list[int], cfg, device, tta: bool,
+                     preprocess: bool = False, sar_colormap: bool = False):
+    """用 TransOSS 模型提取特征。modalities: 0=optical, 1=sar。preprocess 时对 SAR 图在 transform 前增强。"""
     from PIL import Image
     from torchvision import transforms as T
     from torch.utils.data import DataLoader, Dataset
@@ -78,6 +104,8 @@ def extract_features(model, image_paths: list[str], modalities: list[int], cfg, 
             return len(self.paths)
         def __getitem__(self, idx):
             img = Image.open(self.paths[idx]).convert("RGB")
+            if self.mods[idx] == 1 and preprocess:
+                img = apply_sar_preprocess(img, sar_colormap)
             return transform(img), self.mods[idx]
 
     loader = DataLoader(ImgDataset(image_paths, modalities), batch_size=cfg.TEST.IMS_PER_BATCH, shuffle=False, num_workers=4)
@@ -194,9 +222,11 @@ def main() -> None:
     g_mods_t = torch.tensor(g_mods, dtype=torch.long)
 
     print("提取 query 特征...")
-    q_feats = extract_features(model, q_paths, q_mods, cfg, device, args.tta)
+    q_feats = extract_features(model, q_paths, q_mods, cfg, device, args.tta,
+                               preprocess=args.preprocess, sar_colormap=args.sar_colormap)
     print("提取 gallery 特征...")
-    g_feats = extract_features(model, g_paths, g_mods, cfg, device, args.tta)
+    g_feats = extract_features(model, g_paths, g_mods, cfg, device, args.tta,
+                               preprocess=args.preprocess, sar_colormap=args.sar_colormap)
     print(f"q_feats: {q_feats.shape}, g_feats: {g_feats.shape}")
 
     # 后处理按目标候选模态分组执行（避免跨模态污染，与自研框架一致）
@@ -237,6 +267,7 @@ def main() -> None:
         json.dump(prediction, f, ensure_ascii=False, indent=2)
     print(f"prediction.json 已保存: {args.out_prediction}")
     print(f"后处理: TTA={args.tta}, rerank={args.rerank}, QE={args.qe}, cluster={args.cluster}")
+    print(f"SAR 预处理: preprocess={args.preprocess}, sar_colormap={args.sar_colormap}")
 
 
 if __name__ == "__main__":
