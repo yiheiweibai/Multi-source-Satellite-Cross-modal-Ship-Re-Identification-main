@@ -1,12 +1,14 @@
-"""一键消融验证：SAR 预处理 / rerank+QE / 混合三组增强对比 baseline。
+"""一键消融验证：对齐路线图 4.1/7.1/7.2 的组合矩阵，横向对比 baseline。
 
-对同一份本地验证集 local_val_task.json 依次跑 4 个组合（复用同一划分保证横向可比）：
-  1) base       : 无增强参数（baseline 参照）
-  2) preprocess : --preprocess（SAR 去斑 + CLAHE）
-  3) rerankqe   : --rerank --qe
-  4) mixed      : --preprocess --rerank --qe
+对同一份本地验证集 local_val_task.json 依次跑 6 个组合（复用同一划分保证横向可比）：
+  1) base               : 无增强参数（baseline 参照，只跑一次）
+  2) preprocess         : --preprocess（SAR 去斑 + CLAHE）
+  3) preprocess_colormap: --preprocess --sar_colormap（SAR 预处理 + JET 伪彩）
+  4) preprocess_tta     : --preprocess --tta（SAR 预处理 + 水平翻转 TTA）
+  5) rerankqe           : --rerank --qe（k-reciprocal rerank + QE，k1=20 k2=6 lambda=0.3 固定）
+  6) mixed              : --preprocess --rerank --qe（预处理 + 排序后处理混合）
 每个组合输出独立 prediction 文件（pred_ab_*.json）并调 evaluate.py --submission 评测
-（解析 O2S/S2O/O2O 方向得分与综合得分），末尾打印横向对比汇总表，
+（解析 O2S/S2O/O2O 方向得分与综合得分），末尾打印横向对比汇总表（含 ΔBaseline 列），
 供"只保留正增益项"的决策使用。
 
 用法（在 ship_reid_system 根目录，或由 11_transoss_ab.bat 双击触发）：
@@ -34,17 +36,21 @@ SCRIPT_DIR = Path(__file__).resolve().parent          # ship_reid_system/scripts
 SHIP_DIR = SCRIPT_DIR.parent                          # ship_reid_system
 REPO_ROOT = SHIP_DIR.parent                           # 仓库根
 
-# ---- 消融组合：名字 -> transoss_inference.py 追加参数 ----
+# ---- 消融组合：名字 -> (transoss_inference.py 追加参数, 说明) ----
+# base 只出现一次；其余组合输出独立 pred_ab_*.json，全部基于同一份 local_val_task.json。
 COMBOS = [
-    ("base",       []),
-    ("preprocess", ["--preprocess"]),
-    ("rerankqe",   ["--rerank", "--qe"]),
-    ("mixed",      ["--preprocess", "--rerank", "--qe"]),
+    ("base",                [],                                  "无增强（baseline 参照）"),
+    ("preprocess",          ["--preprocess"],                    "SAR 去斑 + CLAHE"),
+    ("preprocess_colormap", ["--preprocess", "--sar_colormap"],  "SAR 预处理 + JET 伪彩"),
+    ("preprocess_tta",      ["--preprocess", "--tta"],           "SAR 预处理 + 水平翻转 TTA"),
+    ("rerankqe",            ["--rerank", "--qe"],                "k-reciprocal rerank + QE（k1=20 k2=6 lambda=0.3）"),
+    ("mixed",               ["--preprocess", "--rerank", "--qe"], "预处理 + rerank + QE 混合"),
 ]
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="一键消融验证（base / preprocess / rerank+QE / mixed）")
+    p = argparse.ArgumentParser(
+        description="一键消融验证（base / preprocess / colormap / tta / rerankqe / mixed 六组合）")
     p.add_argument("--hoss_dir", type=str, default=str(SHIP_DIR / "Hoss-ReID"))
     p.add_argument("--config_file", type=str, default="configs/hoss_transoss_competition.yml")
     p.add_argument("--weight", type=str, default="")
@@ -128,29 +134,30 @@ def main() -> None:
     print(f"[ab] 权重:   {weight}")
     print(f"[ab] 组合:   {', '.join(c[0] for c in COMBOS)}")
 
-    # ---- 逐组合推理 + 评测 ----
+    # ---- 逐组合推理 + 评测（base 只跑一次）----
     results = []  # (name, overall, scores, pred_path)
-    for name, extra in COMBOS:
+    for name, extra, desc in COMBOS:
         pred_path = out_dir / f"pred_ab_{name}.json"
-        print(f"\n[ab] === 组合 {name}: {extra if extra else '(无增强, baseline)'} ===")
+        print(f"\n[ab] === 组合 {name}: {desc} ===")
         run_inference(hoss_dir, inf_script, config_file, weight, task_json, pred_path, extra)
         scores, overall = run_eval(pred_path, task_json, gt_json)
         print(f"[ab] {name}: 综合 {overall:.4f}  O2S {scores.get('O2S', float('nan')):.4f}  "
               f"S2O {scores.get('S2O', float('nan')):.4f}  O2O {scores.get('O2O', float('nan')):.4f}")
         results.append((name, overall, scores, pred_path))
 
-    # ---- 横向对比汇总表（含 baseline 参照）----
-    print("\n" + "=" * 78)
-    print(f"{'组合':<14}{'O2S':<10}{'S2O':<10}{'O2O':<10}{'综合':<10}{'相对baseline':<10}")
-    print("-" * 78)
+    # ---- 横向对比汇总表（含 baseline 参照与 ΔBaseline 列）----
+    print("\n" + "=" * 90)
+    print(f"{'组合':<20}{'O2S':<10}{'S2O':<10}{'O2O':<10}{'综合':<10}{'ΔBaseline':<10}")
+    print("-" * 90)
     base_overall = results[0][1]
     for name, overall, scores, _ in results:
         delta = (overall - base_overall) if (overall is not None and base_overall is not None) else None
         delta_s = f"{delta:+.4f}" if delta is not None else "n/a"
-        print(f"{name:<14}{scores.get('O2S', float('nan')):<10.4f}"
+        tag = " (base)" if name == "base" else ""
+        print(f"{name:<20}{scores.get('O2S', float('nan')):<10.4f}"
               f"{scores.get('S2O', float('nan')):<10.4f}{scores.get('O2O', float('nan')):<10.4f}"
-              f"{overall:<10.4f}{delta_s:<10}")
-    print("=" * 78)
+              f"{overall:<10.4f}{delta_s:<10}{tag}")
+    print("=" * 90)
     print("[ab] 预测已保存: " + ", ".join(str(r[3]) for r in results))
     print("[ab] 只保留相对 baseline 为正增益的组合项，叠加进最终推理配置。")
 

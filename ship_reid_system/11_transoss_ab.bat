@@ -1,6 +1,10 @@
 @echo off
 chcp 65001 >nul
-REM 11_transoss_ab.bat - 一键消融验证：base / preprocess / rerank+QE / mixed 四组合横向对比
+REM 11_transoss_ab.bat - 一键消融验证：对齐路线图 4.1/7.1/7.2 的七组合矩阵横向对比
+REM   SAR 预处理专项（路线图 4.1 四组）: base / --preprocess / --preprocess --sar_colormap / --preprocess --tta
+REM   排序专项（路线图 7.1/7.2 两组）  : base / --rerank --qe（rerank 固定 k1=20 k2=6 lambda=0.3）
+REM   混合组                          : --preprocess --rerank --qe
+REM   base 只跑一次，其余组合输出独立 pred_ab_*.json，全部基于同一份 local_val_task.json
 REM 前提：
 REM   1. 已运行 08_transoss_setup.bat 完成环境准备（Hoss-ReID 存在）
 REM   2. 已运行 07_transoss_pipeline.bat 完成训练（权重 logs/competition_transoss/transformer_200.pth）
@@ -63,6 +67,6 @@ if not "%EC%"=="0" (
     pause
     exit /b %EC%
 )
-echo [11] 消融完成：pred_ab_base.json / pred_ab_preprocess.json / pred_ab_rerankqe.json / pred_ab_mixed.json
-echo     上方汇总表为同一验证集横向对比，只保留相对 baseline 为正增益的组合项。
+echo [11] 消融完成：pred_ab_base.json / pred_ab_preprocess.json / pred_ab_preprocess_colormap.json / pred_ab_preprocess_tta.json / pred_ab_rerankqe.json / pred_ab_mixed.json
+echo     上方汇总表为同一验证集横向对比（含 ΔBaseline 列），只保留相对 baseline 为正增益的组合项。
 pause
