@@ -13,8 +13,8 @@ REM        SDF-Net\data\HOSS\{bounding_box_train,bounding_box_test,query}
 REM      The existing local_val_task.json is reused (no re-split) so results stay comparable.
 REM Notes:
 REM   - Data directory can be overridden with the SDF_DATA_DIR environment variable.
-REM   - SDF-Net.yml default IMS_PER_BATCH=32 fits a 16GB GPU. If you get OOM, set
-REM     SDF_IMS_PER_BATCH=16 before running 13_sdfnet_plan.bat.
+REM   - SDF-Net.yml default IMS_PER_BATCH=32 fits a 16GB GPU. If you get OOM,
+REM     lower IMS_PER_BATCH in the yaml (19_mos_retrain.bat trains with the same yaml).
 cd /d "%~dp0"
 
 set ROOT=%~dp0
