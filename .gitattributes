@@ -1,0 +1,12 @@
+# 强制 .bat 文件使用 CRLF 换行（cmd.exe 要求）
+*.bat text eol=crlf
+
+# 其他文本文件使用 LF（git 标准）
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.csv text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=lf

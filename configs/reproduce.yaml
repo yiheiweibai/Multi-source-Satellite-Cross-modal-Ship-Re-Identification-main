@@ -1,0 +1,96 @@
+# 最终提交复现配置（唯一事实来源 / single source of truth）
+#
+# 由 scripts/repro_cfg.py 读取，供 14~18 号 .bat 使用：
+#   14_submit_1_env_check.bat      环境自检
+#   15_submit_2_sdfnet_infer.bat   SDF-Net 成员的测试集推理
+#   16_submit_3_shipvit_infer.bat  ship_reid_vit 测试集推理（TTA + rerank）
+#   17_submit_4_rrf_fuse.bat       RRF 倒数排名融合 -> prediction.json
+#   18_submit_5_verify.bat         提交格式终检
+#
+# 所有相对路径一律相对本工程根目录（Multi-source-...-main）解析（scripts/repro_cfg.py::resolve）。
+#
+# ---------------------------------------------------------------------------
+# 怎么改集成方案（两处，互不干扰）
+#
+#   加成员：在 ensemble.members 里加一条 {name, ckpt, pred}
+#           ckpt 相对 sdf_checkpoint_dir（也可写绝对路径）；留空表示不需要本地推理
+#   改权重：在 ensemble.presets 里对应的预设下改数字，或增删该预设里的成员条目
+#           预设里没列出的成员不参与融合；权重必须 > 0
+#   切预设：改 ensemble.active 一行；或运行时用 17_submit_4_rrf_fuse.bat --preset <名>
+#   临时扫权重：17_submit_4_rrf_fuse.bat --weights 2 1 1 1
+#           （个数需与当前预设的成员数一致，按预设内顺序一一对应）
+# ---------------------------------------------------------------------------
+
+paths:
+  # 官方赛题文件
+  test_task: ../question6-data/preliminary-round-test-data/task.json
+  # SDF-Net 主骨干
+  sdfnet_dir: SDF-Net
+  sdfnet_config: configs/SDF-Net.yml                 # 相对 sdfnet_dir；推理必须在 SDF-Net 目录下运行
+  sdfnet_official: SDF-Net/logs/SDF-Net/SDF-Net_256.pth
+  sdf_checkpoint_dir: logs/SDF-Net-finetune
+  sdf_sim_dir: sims/test
+  # ship_reid_vit 异构分支
+  shipvit_dir: ship_reid_vit
+  shipvit_pred: ship_reid_vit/outputs/prediction.json   # 必须与 members 里 ship_reid_vit 的 pred 一致
+  # 最终提交文件
+  out_prediction: ../prediction.json
+
+ensemble:
+  k: 10          # RRF 平滑常数，score = sum(w / (k + rank))
+  topk: 10       # 每条 query 保留的候选数（赛题要求恰好 10）
+
+  # 生效的预设（改这一行即可切换集成方案）
+  active: final
+
+  # 权重预设：预设名 -> {成员名: 权重}
+  # 顺序即融合时成员与权重的绑定顺序，由 Python 侧读取，不经命令行
+  presets:
+    # 当前采用：等权四成员，本地验证 Final 0.6346（fold0 0.6131 / fold1 0.6561）
+    # MOS ep75 替换 E0 ep80：单模型 0.6118 > 0.5888，且为不同损失训出的异构成员
+    # （五成员方案 MOS75+E0_80+45+25+sv 为 0.6363，增量 0.0017 < 0.003，故不加 E0_80）
+    final:
+      sdfnet_mos75: 1.0
+      sdfnet_ep45: 1.0
+      sdfnet_ep25: 1.0
+      ship_reid_vit: 1.0
+
+    # 稳健底线（无折信息的保守估计 +0.0181）：仅锚点 + 异构分支
+    anchor_plus_sv:
+      sdfnet_ep80: 1.0
+      ship_reid_vit: 1.0
+
+    # 多成员方案示例（未评测，仅演示改权重/增删成员）
+    # anchor_heavy:
+    #   sdfnet_ep80: 2.0
+    #   sdfnet_ep45: 1.0
+    #   sdfnet_ep25: 1.0
+    #   ship_reid_vit: 1.0
+
+  # 成员池：定义一次，被预设按名引用
+  #   ckpt  相对 sdf_checkpoint_dir（留空 = 复用已有预测、不做本地推理）
+  #   pred  该成员输出的预测 json（相对工程根目录）
+  members:
+    - name: sdfnet_mos75         # 锚点：MOS CMAL 重训最优（0.6118，E0 为 0.5888）
+      ckpt: h:/Ship-Re-Identification/Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/logs/SDF-Net-mos/transformer_75.pth
+      pred: sims/test/pred_mos75.json
+    - name: sdfnet_ep80          # 旧锚点（0.5888），已被 sdfnet_mos75 替换；保留在池中以便回退
+      ckpt: transformer_80.pth
+      pred: sims/test/pred_ep80.json
+    - name: sdfnet_ep45          # 两折交叉验证下最稳定的伙伴（0.0079 / 0.0073）
+      ckpt: transformer_45.pth
+      pred: sims/test/pred_ep45.json
+    - name: sdfnet_ep25          # 次稳定伙伴
+      ckpt: transformer_25.pth
+      pred: sims/test/pred_ep25.json
+    - name: ship_reid_vit        # 异构分支，提供跨架构多样性（TTA + rerank 后处理）
+      ckpt: ""
+      pred: ship_reid_vit/outputs/prediction.json
+
+# 仅用于 18 号脚本回显本地验证基准，不参与流程
+local_val:
+  task: ../question6-data/traindata/local_val_task.json
+  gt: ../question6-data/traindata/local_val_gt.json
+  final: "0.6346"
+  fold0: "0.6131"
+  fold1: "0.6561"

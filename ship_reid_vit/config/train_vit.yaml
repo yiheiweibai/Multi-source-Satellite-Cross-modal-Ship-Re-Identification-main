@@ -1,0 +1,94 @@
+# ============================================================
+# ViT 正式训练配置（路线 Step1-3）
+# 目标硬件：单卡 16GB（如 RTX 4070 Ti SUPER）/ CUDA 12.4
+# 用法：
+#   python train.py --config config/train_vit.yaml
+# 说明：Config.load 只加载本文件（不自动合并 default.yaml），故数据路径显式列出。
+# ============================================================
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda
+project_name: ship_reid_vit_gpu
+
+# ---------- 数据（真实路径） ----------
+data_root: ../../question6-data/traindata
+train_labels_csv: ../../question6-data/traindata/labels_train.csv
+val_labels_csv: ""
+test_task_json: ../../question6-data/preliminary-round-test-data/task.json
+local_val_task_json: ../../question6-data/traindata/local_val_task.json
+local_val_gt_json: ../../question6-data/traindata/local_val_gt.json
+auto_num_classes: true
+
+# ---------- 数据加载 ----------
+image_size: 224
+num_workers: 12
+# 模态独立归一化（由 02_prepare_data.bat -> compute_stats.py 实测）
+optical_mean: [0.1709, 0.2070, 0.2151]
+optical_std: [0.1967, 0.1956, 0.1908]
+sar_mean: [0.0242, 0.0242, 0.0242]
+sar_std: [0.1214, 0.1214, 0.1214]
+sar_speckle_aug: true
+
+# ---------- PK 采样（实测 p=80,k=2 -> batch=160） ----------
+# 实测峰值显存/吞吐（RTX 4070 Ti SUPER 16GB，真实模型+AdamW+EMA+AMP）：
+#   batch  32 -> 4.7GB / 342 img/s     batch 128 -> 10.8GB / 458 img/s
+#   batch 160 -> 13.6GB / 464 img/s（峰值，吃满约 14GB）
+#   batch 192 -> 15.2GB / 220 img/s（显存不足致分配器抖动，速度崩，勿用）
+# pk_k=2：赛题 90% 身份仅光学 1 张 + SAR 1 张，恰好构成跨模态正对
+pk_p: 80
+pk_k: 2
+pk_prefer_dual_modal: true
+pk_sampler: cross_modal
+
+# ---------- 模型（ViT 优先） ----------
+backbone: vit_base_patch16_224
+pretrained: true
+pretrained_path: weights/vit_base_patch16_224.pth
+vit_split_layer: 6
+embedding_dim: 0
+modality_projection: false
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+w_arcface: 0.3            # ArcFace 开启（小样本细粒度更稳）
+arcface_scale: 30.0
+arcface_margin: 0.5
+supcon_temperature: 0.07
+triplet_margin: 0.3
+label_smooth: 0.1
+# 路线 ② 跨模态对齐：显式拉近同身份 O/S 对，直接优化 O2S/S2O
+# 全量数据实测（pk_p=16/pk_k=2 冒烟）：每批 O=S=16、16 个身份全双模态；
+# 初始 cm_infonce≈3.07、cm_triplet≈0.40，同一批 CE≈8.1、SupCon≈7.0、ArcFace≈23.2。
+# 权重 0.1 时跨模态项仅占 1.8%，信号偏弱；0.3 时约 5%，与主任务量级匹配。
+# 若 O2S/S2O 仍不涨可提到 0.5；若训练不稳则回落到 0.1
+w_cm_infonce: 0.3
+w_cm_triplet: 0.3
+cm_temperature: 0.07
+cm_margin: 0.3
+
+# ---------- 训练 ----------
+epochs: 100               # batch 160 时每 epoch 仅 ~37 步，故补足轮数保持总更新量
+lr: 0.0006                # 相对 batch 32/lr 3e-4 按 sqrt(batch) 规则放大
+backbone_lr_scale: 0.1    # 骨干 LR = 6e-5
+weight_decay: 0.0005
+scheduler: cosine
+warmup_epochs: 3
+ema_decay: 0.999
+amp: true
+# 断点续训：留空=从头训练；填 checkpoint 路径，或填 auto（自动续 outputs/checkpoints/last.pth）
+# 命令行亦可覆盖：03_train.bat --resume auto
+resume: ""
+
+# ---------- 输出 ----------
+output_dir: outputs
+log_interval: 20
+eval_interval: 1
+tb_enabled: true
+save_every: 5             # 每 5 个 epoch 另存 epoch_XXX.pth（含优化器状态，约 2.1GB/份）
+
+# ---------- 推理 ----------
+topk: 10
+test_batch_size: 64

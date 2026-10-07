@@ -1,0 +1,7 @@
+exp,model,数据处理,TTA,Rerank,QE,Cluster,O2S,S2O,O2O,Overall,ΔBaseline,备注
+exp_003,TransOSS,原图,×,×,×,×,,,,,0,base（baseline 参照，只跑一次）
+exp_003,TransOSS,SAR预处理(去斑+CLAHE),×,×,×,×,,,,,,
+exp_003,TransOSS,SAR预处理+JET伪彩,×,×,×,×,,,,,,
+exp_003,TransOSS,SAR预处理,✓,×,×,×,,,,,,
+exp_003,TransOSS,原图,×,✓,✓,×,,,,,,rerank 固定 k1=20 k2=6 lambda=0.3
+exp_003,TransOSS,SAR预处理,×,✓,✓,×,,,,,,预处理+rerank+QE 混合

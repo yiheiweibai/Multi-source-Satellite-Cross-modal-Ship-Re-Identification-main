@@ -1,0 +1,4 @@
+exp,model,数据处理,TTA,Rerank,QE,Cluster,O2S,S2O,O2O,Overall,ΔBaseline,备注
+exp_001,TransOSS,原图,×,×,×,×,0.4612,0.4126,0.9490,0.4881,0,划分批次A（09 脚本 seed42 首次生成），baseline 参照
+exp_001,TransOSS,原图,×,×,×,×,0.4637,0.3990,0.9492,0.4831,-0.0050,划分批次B（重新划分后），与批次A存在划分差异，Δ 不可直接对比
+exp_001,TransOSS,原图,×,×,×,×,,,,0.5055,n/a,Public 提交（对应批次B）；Public 为测试集、与本地验证集分布不同，不参与 Δ 比较

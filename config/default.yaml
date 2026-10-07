@@ -1,0 +1,81 @@
+# 2026 全国大数据与计算智能挑战赛 · 赛题06 多源卫星跨模态舰船重识别
+# 默认配置。命令行 --config 传入自定义 yaml 时，仅覆盖此处列出的字段。
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda            # cuda / cpu
+project_name: ship_reid
+
+# ---------- 数据路径（真实数据） ----------
+# JSON 模式：train_ann / val_ann 指向 {image_path, identity, modality} 标注
+# CSV 模式（官方 labels.csv）：train_labels_csv / val_labels_csv 非空时优先，
+#   image_path 相对 csv 所在数据包根目录，ship_id 自动映射连续整数。
+data_root: ../赛题6-初赛/训练数据
+train_ann: ""           # JSON 模式标注，当前用 CSV 模式（train_labels_csv 非空），无需填写
+val_ann: ""             # JSON 模式验证标注，当前用 CSV 模式（val_labels_csv 可填），无需填写
+train_labels_csv: ../赛题6-初赛/训练数据/labels_train.csv
+val_labels_csv: ""      # 验证 labels.csv（CSV 模式下留空则训练时不验证）
+test_task_json: ../赛题6-初赛/初赛测试数据/task.json
+max_samples: 0          # >0 时每个 CSV 数据集只取前 N 个样本（冒烟/调试用，0=全部）
+auto_num_classes: true  # true 时训练身份数由数据集自动推断，覆盖 num_classes
+dummy_mode: false       # false：禁用模拟数据，仅使用真实数据；需要模拟数据时置 true
+
+# ---------- 数据加载 ----------
+image_size: 256
+num_workers: 4
+sar_speckle_aug: true
+# 模态独立归一化（默认 ImageNet；用 scripts/compute_stats.py 生成后替换）
+optical_mean: [0.485, 0.456, 0.406]
+optical_std: [0.229, 0.224, 0.225]
+sar_mean: [0.485, 0.456, 0.406]
+sar_std: [0.229, 0.224, 0.225]
+sar_color_jitter: false   # SAR 禁用 ColorJitter，改用强度抖动
+
+# ---------- PK 采样 ----------
+pk_p: 8
+pk_k: 4
+pk_prefer_dual_modal: true
+
+# ---------- 模型 ----------
+backbone: resnet50      # resnet50 / vit_base_patch16_224
+pretrained: true
+pretrained_path: ""     # 遥感预训练权重路径（SatMAE/RemoteCLIP），空则用 ImageNet
+share_layer: layer3
+vit_split_layer: 6
+num_classes: 40
+embedding_dim: 0        # 检索特征维度（0 = 骨干输出维度，如 512/1024）
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+w_arcface: 0.0          # ArcFace 损失权重（>0 启用，推荐 0.3~0.5）
+arcface_scale: 30.0
+arcface_margin: 0.5
+supcon_temperature: 0.07
+supcon_base_temperature: 0.07
+triplet_margin: 0.3
+adaptive_margin: false
+label_smooth: 0.1
+
+# ---------- 训练 ----------
+epochs: 10
+lr: 0.0003
+backbone_lr_scale: 0.1
+weight_decay: 0.0005
+scheduler: cosine
+total_steps: 0
+warmup_epochs: 1
+ema_decay: 0.999
+use_ema: true            # 启用 EMA 权重（推理时使用）
+amp: true                # 启用 AMP 混合精度
+resume: ""
+
+# ---------- 输出 ----------
+output_dir: outputs
+log_interval: 20
+eval_interval: 1
+tb_enabled: true
+
+# ---------- 推理 ----------
+topk: 10

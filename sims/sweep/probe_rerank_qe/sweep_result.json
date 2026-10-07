@@ -1,0 +1,87 @@
+{
+  "tag": "probe_rerank_qe",
+  "ckpt_dir": "H:\\Ship-Re-Identification\\Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main\\ship_reid_system\\logs\\SDF-Net-finetune",
+  "opts": {
+    "rerank": true,
+    "qe": true,
+    "tta": false
+  },
+  "task_json": "H:\\Ship-Re-Identification\\question6-data\\traindata\\local_val_task.json",
+  "gt_json": "H:\\Ship-Re-Identification\\question6-data\\traindata\\local_val_gt.json",
+  "best": {
+    "epoch": 80,
+    "status": "OK",
+    "infer_s": 44,
+    "eval_s": 7,
+    "overall": 0.5815,
+    "scores": {
+      "O2S": {
+        "R@1": 0.4943,
+        "mAP@10": 0.6054,
+        "score": 0.5499
+      },
+      "S2O": {
+        "R@1": 0.4703,
+        "mAP@10": 0.5819,
+        "score": 0.5261
+      },
+      "O2O": {
+        "R@1": 0.9737,
+        "mAP@10": 0.9737,
+        "score": 0.9737
+      }
+    }
+  },
+  "ranking": [
+    {
+      "epoch": 80,
+      "status": "OK",
+      "infer_s": 44,
+      "eval_s": 7,
+      "overall": 0.5815,
+      "scores": {
+        "O2S": {
+          "R@1": 0.4943,
+          "mAP@10": 0.6054,
+          "score": 0.5499
+        },
+        "S2O": {
+          "R@1": 0.4703,
+          "mAP@10": 0.5819,
+          "score": 0.5261
+        },
+        "O2O": {
+          "R@1": 0.9737,
+          "mAP@10": 0.9737,
+          "score": 0.9737
+        }
+      }
+    }
+  ],
+  "all": [
+    {
+      "epoch": 80,
+      "status": "OK",
+      "infer_s": 44,
+      "eval_s": 7,
+      "overall": 0.5815,
+      "scores": {
+        "O2S": {
+          "R@1": 0.4943,
+          "mAP@10": 0.6054,
+          "score": 0.5499
+        },
+        "S2O": {
+          "R@1": 0.4703,
+          "mAP@10": 0.5819,
+          "score": 0.5261
+        },
+        "O2O": {
+          "R@1": 0.9737,
+          "mAP@10": 0.9737,
+          "score": 0.9737
+        }
+      }
+    }
+  ]
+}

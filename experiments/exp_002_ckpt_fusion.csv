@@ -1,0 +1,12 @@
+exp,checkpoint,O2S,S2O,O2O,Overall,ΔBaseline,备注
+exp_002,transformer_200,待补,待补,待补,0.4831,0,最优单点（末轮 200）
+exp_002,transformer_140,待补,待补,待补,0.4822,-0.0009,
+exp_002,transformer_180,待补,待补,待补,0.4822,-0.0009,
+exp_002,transformer_160,待补,待补,待补,0.4819,-0.0012,
+exp_002,transformer_100,待补,待补,待补,0.4672,-0.0159,
+exp_002,transformer_120,待补,待补,待补,0.4654,-0.0177,
+exp_002,transformer_80,待补,待补,待补,0.4519,-0.0312,
+exp_002,transformer_60,待补,待补,待补,0.4294,-0.0537,
+exp_002,transformer_40,待补,待补,待补,0.3897,-0.0934,
+exp_002,transformer_20,待补,待补,待补,0.3309,-0.1522,
+exp_002,RRF(top3=200/140/180),待补,待补,待补,0.4835,0.0004,结论：RRF 相对最优单点 200 无实质增益（+0.0004），暂不采用；方向得分待重跑 10_transoss_fusion.bat 补录

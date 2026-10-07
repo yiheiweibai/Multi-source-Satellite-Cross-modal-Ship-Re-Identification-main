@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Training outputs
+outputs/
+logs/
+*.pth
+*.pt
+*.ckpt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 数据集（不上传，由赛题方提供）
+赛题6-初赛/
+
+# 数据标注（由 ensure_dummy_data 自动生成）
+ship_reid_system/data/annotations/train.json
+ship_reid_system/data/annotations/val.json
+
+# 推理产物
+prediction.json
+
+# 第三方仓库 SDF-Net（官方克隆，独立 .git；复现材料由 README 披露克隆地址与 commit，不并入主仓库）
+ship_reid_system/SDF-Net/
+# SDF-Net 数据/权重/日志（12_sdfnet_* 生成，体积大不入库）
+ship_reid_system/data/
+ship_reid_system/logs/
+ship_reid_system/sims/
+ship_reid_system/identity_map.json
