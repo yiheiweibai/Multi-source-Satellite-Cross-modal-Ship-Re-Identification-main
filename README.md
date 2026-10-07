@@ -127,7 +127,7 @@ h:\Ship-Re-Identification\
 | 18 | `18_submit_5_verify.bat` | **final ⑤** | 调 `scripts\check_prediction.py` 逐条对照平台「直接判定无效」条件核验提交文件，并回显本地验证基准 | `.venv-sdfnet` | `prediction.json` + `task.json` → PASS/FAIL 报告（基准 Final 0.6346 / fold0 0.6131 / fold1 0.6561） |
 | 19 | `19_mos_retrain.bat` | 可选重训 | 用 CMAL 对齐损失重训锚点模型（`SDF-Net-mos.yml` 相对 `SDF-Net.yml` 的唯一差异是 `CMAL_LOSS_WEIGHT=1.0`），每 5 epoch 存一次 checkpoint；**从官方权重起训，不是 resume** | `.venv-sdfnet` + GPU | 官方权重 → `logs\SDF-Net-mos\transformer_*.pth`（用 `sdfnet_ckpt_sweep.py` 按 Final 选优） |
 
-> 分工：**14→15→16→17→18** 是唯一的 final 提交链路（下文 §4.1~§4.5 逐步展开）；**12** 是一次性环境准备；**13** 是历史遗留入口；**19** 仅在需要替换锚点时才跑。
+> 分工：**14→15→16→17→18** 是唯一的 final 提交链路（下文 §4.1~§4.5 逐步展开）；**12** 是一次性环境准备；**13** 是历史遗留入口；**19** 仅在需要替换锚点时才跑。**端到端从零到提交的完整顺序见 §4.7。**
 
 统一约定：所有步骤在**工程根目录**执行；每一步都会重新解析 `configs/reproduce.yaml`（不读取陈旧的环境变量文件）。产物链路：
 
@@ -175,6 +175,48 @@ h:\Ship-Re-Identification\
 ### 4.6 `13_sdfnet_plan.bat`（历史遗留入口）
 
 分阶段对比编排。其 C/D 阶段依赖**已删除**的 TransOSS 侧，本就不可运行；A/B 阶段（官方权重/微调权重的 base 与 rerankqe 对比）仍可作微调入口使用。
+
+---
+
+### 4.7 完整跑通顺序（端到端）
+
+统一前提：所有脚本都在**工程根目录**执行（`ship_reid_vit\*` 除外，它们在自己目录内执行）；14~18 每一步都会重新解析 `configs\reproduce.yaml`，不依赖上一步残留的环境变量文件。
+
+#### 4.7.1 从零首次复现（两个 venv 与所有产物都不存在）
+
+| 序 | 脚本 | 运行环境 | 为什么必须在这个位置 |
+|---|---|---|---|
+| 1 | `ship_reid_vit\01_setup.bat` | 系统 Python（脚本自建 venv） | 建 `ship_reid_vit\venv`、下 `weights\vit_base_patch16_224.pth` |
+| 2 | `ship_reid_vit\02_prepare_data.bat` | `ship_reid_vit\venv` | 产出 `question6-data\traindata\local_val_task.json` 与 `labels_train.csv`；**12 号第 7 步（HOSS 转换）硬依赖前者** |
+| 3 | `ship_reid_vit\03_train.bat` | `ship_reid_vit\venv` + GPU | 产出 `outputs\checkpoints\best.pth`（16 号推理的输入） |
+| 4 | `12_sdfnet_setup.bat` | 系统 Python（脚本自建 venv） | 建 `.venv-sdfnet`、下载官方权重并派生 `SDF-Net_256.pth`、转 HOSS 数据 |
+| 5 | `14_submit_1_env_check.bat` | `.venv-sdfnet` | 自检，按 `[MISS]` 补齐后再继续 |
+| 6 | `15_submit_2_sdfnet_infer.bat` | `.venv-sdfnet` | 3 个 SDF-Net 成员逐个推理 → `sims\test\pred_mos75.json` / `pred_ep45.json` / `pred_ep25.json` |
+| 7 | `16_submit_3_shipvit_infer.bat` | `.venv-sdfnet`（`ship_reid_vit\venv` 仅当需要重跑推理） | → `ship_reid_vit\outputs\prediction.json` |
+| 8 | `17_submit_4_rrf_fuse.bat` | `.venv-sdfnet` | RRF 融合 → `../prediction.json` |
+| 9 | `18_submit_5_verify.bat` | `.venv-sdfnet` | 提交格式终检；PASS 才上传 |
+
+`04_local_val.bat` 与 `05_inference.bat` **不在 final 链路内**：04 是 ship_reid_vit 侧的本地验证自测（TTA + rerank + 三方向打分）；**05 与 16 号是同一条命令、同一产物**（`inference.py --use_test_task --tta --rerank` → `outputs\prediction.json`），16 号是 final 链路里的等价入口。
+
+#### 4.7.2 产物已就绪时的最短链路
+
+若以下产物都已存在：两份官方权重、`SDF-Net\data\HOSS`、`logs\SDF-Net-mos\transformer_75.pth`、`logs\SDF-Net-finetune\transformer_{25,45}.pth`、`sims\test\pred_*.json`、`ship_reid_vit\outputs\{prediction.json,checkpoints\best.pth}`，则只剩两个虚拟环境需要重建：
+
+```bat
+ship_reid_vit\01_setup.bat       :: 建 ship_reid_vit\venv（权重已存在时仍会走一遍下载脚本）
+12_sdfnet_setup.bat              :: 建 .venv-sdfnet；权重 / HOSS 数据检测到已存在会跳过
+14_submit_1_env_check.bat
+15_submit_2_sdfnet_infer.bat     :: 无复用逻辑，3 个成员会全部重算
+16_submit_3_shipvit_infer.bat    :: 检测到 prediction.json 已存在 -> REUSED，不重跑
+17_submit_4_rrf_fuse.bat
+18_submit_5_verify.bat
+```
+
+#### 4.7.3 三个必知约束
+
+- **14 号要求两个 venv 同时存在**：`final` 预设含 `ship_reid_vit`，自检会把「ship_reid_vit venv python」与 `best.pth` 列为**必须项**（`scripts\repro_cfg.py::required_items`），缺一项即 MISS。
+- **15/16/17/18 的第一件事都是拿 `.venv-sdfnet` 跑 `repro_cfg.py`**，所以 `12_sdfnet_setup.bat` 必须最先完成；即使 16 号最终走 REUSED 分支，也绕不开这一步。
+- **`13` 与 `19` 不在端到端链路上**：13 是历史遗留入口（见 §4.6），19 仅在需要重训锚点时才跑（需 GPU，输出 `logs\SDF-Net-mos\transformer_*.pth`，再用 `scripts\sdfnet_ckpt_sweep.py` 按 `Final` 选优）。
 
 ---
 
