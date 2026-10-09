@@ -95,7 +95,9 @@ def make_loss(cfg, num_classes):  # modified by gu
         )
 
     from .structure_loss import StructureConsistencyLoss
+    from .cmal_loss import ModalityAlignmentLoss
 
     structure_loss_func = StructureConsistencyLoss()
+    cmal_loss_func = ModalityAlignmentLoss()
 
-    return loss_func, center_criterion, structure_loss_func
+    return loss_func, center_criterion, structure_loss_func, cmal_loss_func

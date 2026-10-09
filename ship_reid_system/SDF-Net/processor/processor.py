@@ -8,7 +8,6 @@ from utils.metrics import R1_mAP_eval
 from torch.cuda import amp
 import torch.distributed as dist
 from loss import clip_loss
-from loss.cmal_loss import ModalityAlignmentLoss
 
 
 def do_train_pair(cfg, model, train_loader_pair, optimizer, scheduler, local_rank):
@@ -98,6 +97,7 @@ def do_train(
     num_query,
     local_rank,
     structure_loss_func=None,
+    cmal_loss_func=None,
 ):
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
     eval_period = cfg.SOLVER.EVAL_PERIOD
@@ -122,12 +122,6 @@ def do_train(
     loss_orth_meter = AverageMeter()
     loss_struct_meter = AverageMeter()
     loss_cmal_meter = AverageMeter()
-
-    # CMAL 模态对齐损失（仅 MOS 配置 CMAL_LOSS_WEIGHT > 0 时启用）
-    cmal_loss_func = None
-    if getattr(cfg.MODEL, "CMAL_LOSS_WEIGHT", 0.0) > 0:
-        cmal_loss_func = ModalityAlignmentLoss()
-        logger.info("CMAL alignment loss enabled, weight={}".format(cfg.MODEL.CMAL_LOSS_WEIGHT))
 
     evaluator = R1_mAP_eval(num_query, max_rank=50, feat_norm=cfg.TEST.FEAT_NORM)
     scaler = amp.GradScaler()
@@ -168,6 +162,7 @@ def do_train(
 
             current_loss_orth = 0.0
             current_loss_struct = 0.0
+            current_loss_cmal = 0.0
 
             with amp.autocast(enabled=True):
                 if cfg.MODEL.DISENTANGLE:
@@ -201,17 +196,15 @@ def do_train(
                         loss_struct = torch.tensor(0.0, device=target.device)
                         current_loss_struct = 0.0
 
-                    loss = loss_base + loss_orth + loss_struct
                     current_loss_orth = loss_orth.item()
 
-                    # CMAL 模态对齐损失（对融合特征 feat_fuse 计算）
-                    if cmal_loss_func is not None:
-                        loss_cmal_raw = cmal_loss_func(feat_fuse, target, target_cam)
-                        loss_cmal = loss_cmal_raw * cfg.MODEL.CMAL_LOSS_WEIGHT
+                    if cmal_loss_func is not None and cfg.MODEL.CMAL_LOSS_WEIGHT > 0:
+                        loss_cmal = cmal_loss_func(feat_fuse, target, target_cam)
+                        loss_cmal = loss_cmal * cfg.MODEL.CMAL_LOSS_WEIGHT
                         current_loss_cmal = loss_cmal.item()
-                        loss = loss + loss_cmal
                     else:
-                        current_loss_cmal = 0.0
+                        loss_cmal = torch.tensor(0.0, device=target.device)
+                    loss = loss_base + loss_orth + loss_struct + loss_cmal
                 else:
                     outputs = model(img, target, cam_label=target_cam, img_wh=img_wh)
                     cls_score, feat, f_struct = outputs
@@ -231,17 +224,15 @@ def do_train(
                         loss_struct = torch.tensor(0.0, device=target.device)
                         current_loss_struct = 0.0
 
-                    loss = loss_base + loss_struct
                     current_loss_orth = 0.0
 
-                    # CMAL 模态对齐损失（对特征 feat 计算）
-                    if cmal_loss_func is not None:
-                        loss_cmal_raw = cmal_loss_func(feat, target, target_cam)
-                        loss_cmal = loss_cmal_raw * cfg.MODEL.CMAL_LOSS_WEIGHT
+                    if cmal_loss_func is not None and cfg.MODEL.CMAL_LOSS_WEIGHT > 0:
+                        loss_cmal = cmal_loss_func(feat, target, target_cam)
+                        loss_cmal = loss_cmal * cfg.MODEL.CMAL_LOSS_WEIGHT
                         current_loss_cmal = loss_cmal.item()
-                        loss = loss + loss_cmal
                     else:
-                        current_loss_cmal = 0.0
+                        loss_cmal = torch.tensor(0.0, device=target.device)
+                    loss = loss_base + loss_struct + loss_cmal
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -269,10 +260,9 @@ def do_train(
 
         if not cfg.MODEL.DIST_TRAIN or dist.get_rank() == 0:
             current_lr = scheduler._get_lr(epoch)[0]
-            cmal_str = f", CMAL: {loss_cmal_meter.avg:.3f}" if cmal_loss_func is not None else ""
             logger.info(
                 f"Epoch[{epoch}] done. "
-                f"Loss: {loss_meter.avg:.3f} (Base: {loss_base_meter.avg:.3f}, Orth: {loss_orth_meter.avg:.3f}, Struct: {loss_struct_meter.avg:.3f}{cmal_str}), "
+                f"Loss: {loss_meter.avg:.3f} (Base: {loss_base_meter.avg:.3f}, Orth: {loss_orth_meter.avg:.3f}, Struct: {loss_struct_meter.avg:.3f}, CMAL: {loss_cmal_meter.avg:.3f}), "
                 f"Acc: {acc_meter.avg:.3%}, "
                 f"Lr: {current_lr:.2e}"
             )
