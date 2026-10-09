@@ -41,6 +41,7 @@ if not exist "%STEPS_TXT%" (
 echo [15] preset    : %RRF_PRESET%
 echo [15] test task : %TEST_TASK%
 echo [15] output dir: %SDF_SIM_DIR%
+echo [15] member top-K: %RRF_MEMBER_TOPK%
 echo [15] to run    : %SDF_N% member(s) need local inference
 
 if "%SDF_N%"=="0" (
@@ -61,7 +62,7 @@ cd /d "%SDFNET_DIR%"
 for /f "usebackq tokens=1,2,3 delims=|" %%a in ("%STEPS_TXT%") do (
     echo.
     echo [15] === %%a ===
-    "%PY%" "%REPRO_DIR%\scripts\sdfnet_inference.py" --config_file "%SDFNET_CONFIG%" --weight "%%b" --task_json "%TEST_TASK%" --out_prediction "%%c" --batch_size 16
+    "%PY%" "%REPRO_DIR%\scripts\sdfnet_inference.py" --config_file "%SDFNET_CONFIG%" --weight "%%b" --task_json "%TEST_TASK%" --out_prediction "%%c" --topk %RRF_MEMBER_TOPK% --batch_size 16
     if errorlevel 1 (
         echo [ERROR] inference failed: %%a
         pause

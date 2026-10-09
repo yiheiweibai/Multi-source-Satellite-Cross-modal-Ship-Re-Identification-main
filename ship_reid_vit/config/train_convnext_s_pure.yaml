@@ -1,0 +1,88 @@
+# ============================================================
+# 「纯配方」筛选配置 - ConvNeXt-Small 双分支（对称强跨模态损失）
+# 由 config/train_convnext_s_s2o_v2.yaml 复制，仅改动【方向权重】与输出名：
+#   cm_dir_w_so 3.0 -> 1.0（即 cm_dir_w_os == cm_dir_w_so == 1.0，完全对称）
+# 动机：v2 已证实 w_cm 0.3->1.0 是真实配方增益（两个独立骨干单模两折稳健 +0.05），
+# 但 v2 的 cm_dir_w_so=3.0 非对称加权在所有替换变体上 fold0 恒负。本配置剥离方向加权，
+# 只保留【纯绝对权重】增益，用于判定该增益能否通过同槽位替换兑进集成。
+# 骨干/lr/PK 采样/优化器/归一化/数据路径与 train_convnext_s.yaml 完全一致，保证纯净 A/B。
+# 用法：python train.py --config config/train_convnext_s_pure.yaml
+# ============================================================
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda
+project_name: ship_reid_convnext_s_pure_screen
+
+# ---------- 数据（真实路径） ----------
+data_root: ../../question6-data/traindata
+train_labels_csv: ../../question6-data/traindata/labels_train.csv
+val_labels_csv: ""
+test_task_json: ../../question6-data/preliminary-round-test-data/task.json
+local_val_task_json: ../../question6-data/traindata/local_val_task.json
+local_val_gt_json: ../../question6-data/traindata/local_val_gt.json
+auto_num_classes: true
+
+# ---------- 数据加载 ----------
+image_size: 224
+num_workers: 12
+# 模态独立归一化（由 02_prepare_data.bat -> compute_stats.py 实测）
+optical_mean: [0.1709, 0.2070, 0.2151]
+optical_std: [0.1967, 0.1956, 0.1908]
+sar_mean: [0.0242, 0.0242, 0.0242]
+sar_std: [0.1214, 0.1214, 0.1214]
+sar_speckle_aug: true
+
+# ---------- PK 采样（与 convnext_s 一致：bs=128 为 13.2GB/528 img/s） ----------
+pk_p: 64
+pk_k: 2
+pk_prefer_dual_modal: true
+pk_sampler: cross_modal
+
+# ---------- 模型（ConvNeXt-Small 双分支） ----------
+backbone: convnext_small.in12k_ft_in1k
+pretrained: true
+pretrained_path: ""
+split_idx: 2              # 前 2 个 stage 为模态特定，其余共享
+embedding_dim: 0
+modality_projection: false
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+w_arcface: 0.3
+arcface_scale: 30.0
+arcface_margin: 0.5
+supcon_temperature: 0.07
+triplet_margin: 0.3
+label_smooth: 0.1
+# --- 纯配方：强化跨模态绝对权重 0.3->1.0，方向完全对称（剥离 cm_dir 加权） ---
+w_cm_infonce: 1.0
+w_cm_triplet: 1.0
+cm_temperature: 0.07
+cm_margin: 0.3
+cm_dir_w_os: 1.0          # anchor=光学 -> SAR 方向（O2S）
+cm_dir_w_so: 1.0          # anchor=SAR -> 光学方向（S2O）；与 os 相等 => 对称
+
+# ---------- 训练 ----------
+epochs: 100
+lr: 0.00054
+backbone_lr_scale: 0.1
+weight_decay: 0.0005
+scheduler: cosine
+warmup_epochs: 3
+ema_decay: 0.999
+amp: true
+resume: ""
+
+# ---------- 输出 ----------
+output_dir: outputs/screen_convnext_s_pure
+log_interval: 20
+eval_interval: 1
+tb_enabled: false
+save_every: 20            # 每 20 个 epoch 另存 epoch_XXX.pth（含优化器状态，约 2.1GB/份）
+
+# ---------- 推理 ----------
+topk: 10
+test_batch_size: 64

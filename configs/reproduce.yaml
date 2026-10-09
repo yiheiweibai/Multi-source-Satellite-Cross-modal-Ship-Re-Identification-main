@@ -14,6 +14,9 @@
 #
 #   加成员：在 ensemble.members 里加一条 {name, ckpt, pred}
 #           ckpt 相对 sdf_checkpoint_dir（也可写绝对路径）；留空表示不需要本地推理
+#           若要接入 ship_reid_vit 系（异构骨干）成员，另加 vit_config + vit_ckpt
+#           （均相对 shipvit_dir），16 号脚本会按此自动推理出 pred；vit_config 必须逐成员
+#           指定，因为 split_idx 不在 checkpoint 的配置回填白名单内
 #   改权重：在 ensemble.presets 里对应的预设下改数字，或增删该预设里的成员条目
 #           预设里没列出的成员不参与融合；权重必须 > 0
 #   切预设：改 ensemble.active 一行；或运行时用 17_submit_4_rrf_fuse.bat --preset <名>
@@ -32,30 +35,70 @@ paths:
   sdf_sim_dir: sims/test
   # ship_reid_vit 异构分支
   shipvit_dir: ship_reid_vit
-  shipvit_pred: ship_reid_vit/outputs/prediction.json   # 必须与 members 里 ship_reid_vit 的 pred 一致
+  shipvit_pred: sims/test/top100_shipvit.json   # 必须与 members 里 ship_reid_vit 的 pred 一致
   # 最终提交文件
   out_prediction: ../prediction.json
 
 ensemble:
-  k: 10          # RRF 平滑常数，score = sum(w / (k + rank))
+  # RRF 平滑常数 k 与「成员暴露给融合的排名深度」member_topk 存在强交互：
+  # 成员只暴露 top-10 时（member_topk=10）k=10 不可能抬高召回上限；把成员放到 top-100
+  # 并降低 k，才让「只在某人 top-100 内的候选」有机会进入输出 top-10。
+  # 本地验证（1450 query）：member_topk=10,k=10 -> 0.6346；member_topk=100,k=3 -> 0.6465（+0.0119）。
+  k: 3           # RRF 平滑常数，score = sum(w / (k + rank))
   topk: 10       # 每条 query 保留的候选数（赛题要求恰好 10）
+  member_topk: 100   # 各成员输入融合的排名深度（写入成员 pred 文件的候选数）
 
   # 生效的预设（改这一行即可切换集成方案）
-  active: final
+  active: final_full
 
   # 权重预设：预设名 -> {成员名: 权重}
   # 顺序即融合时成员与权重的绑定顺序，由 Python 侧读取，不经命令行
   presets:
-    # 当前采用：等权四成员，本地验证 Final 0.6346（fold0 0.6131 / fold1 0.6561）
-    # MOS ep75 替换 E0 ep80：单模型 0.6118 > 0.5888，且为不同损失训出的异构成员
-    # （五成员方案 MOS75+E0_80+45+25+sv 为 0.6363，增量 0.0017 < 0.003，故不加 E0_80）
+    # 当前采用：5 个等权成员（1.0）+ 1 个小权重成员（0.5）+ 深 top-100 成员排名 + k=3
+    # 本地验证 Final 0.6800（b1_topk_probe 折口径：fold0 0.6972 / fold1 0.6628）
+    # 成员搭配沿袭 K=10 时代的结论：MOS ep75 替换 E0 ep80（单模 0.6118 > 0.5888，异构损失）
+    # （五成员方案 MOS75+E0_80+45+25+sv 已复核为负：0.6373，增量 0.0010 < 0.003，故不加 E0_80）
+    # 波次2 新增 ship_reid_convnext_t（ConvNeXt-Tiny 双分支 ep80，单模本地验证 0.5186 > shipvit 0.4815）：
+    #   +0.0270（0.6465->0.6735），k=1~10 两折恒为正；Swin-T 叠加后 Final 反降 0.0048，ResNet50 全线两折为负，均按铁律淘汰
+    # 波次3 新增 ship_reid_convnext_s（ConvNeXt-Small 双分支 ep60，单模本地验证 0.5089）：小权重 0.5
+    #   +0.0065（0.6735->0.6800），两折增益 +0.0085/+0.0045（同时 >= 0.003）；O2S +0.0073 / S2O +0.0070 双方向同向上涨
+    #   （CLIP-ViT-B 全线两折为负或 ≈0，最高 +0.0004，按铁律淘汰）
+    # 波次4 新增两个「强配方」（w_cm_infonce/triplet 0.3->1.0，方向对称）成员：
+    #   ship_reid_convnext_s_pure（ConvNeXt-Small ep40，单模 0.5472）+ ship_reid_swin_s_v2（Swin-Small ep60，单模 0.5547）
+    #   单独任一入集都卡 G2（k 扫描出现负值）；二者同时以 0.75 / 1.0 权入集后互相修补 k 空洞：
+    #   Final 0.6800->0.6905（+0.0105），fold0 +0.0074 / fold1 +0.0136；O2S +0.0080 / S2O +0.0158 / O2O -0.0018
+    #   G2 全 k 为正（min +0.0047）；三种折分割（parity/前后半/相位4）G1 全部双折 >= +0.003；权重邻域呈内部极值
     final:
       sdfnet_mos75: 1.0
       sdfnet_ep45: 1.0
       sdfnet_ep25: 1.0
       ship_reid_vit: 1.0
+      ship_reid_convnext_t: 1.0
+      ship_reid_convnext_s: 0.5
+      ship_reid_convnext_s_pure: 0.75
+      ship_reid_swin_s_v2: 1.0
 
-    # 稳健底线（无折信息的保守估计 +0.0181）：仅锚点 + 异构分支
+    # 波次5（2026-10-09，当前 active）：8 成员全部改用官方全量 labels.csv（3534 身份/7422 图）重训
+    #   动机：exp_005 受控嵌套双折（训练身份 2122→2828，同配方同 seed）单模 Final +0.0669/+0.0333
+    #         两折同向、O2S/S2O 四格全正；外推 2828→3534（+25%，边际递减区）期望 +0.02~+0.04。
+    #   注意：全量重训成员已见过全部 3534 身份，**不存在无泄漏本地验证**，故本预设属盲提交；
+    #         配方/骨干/PK/seed 与 final 对应成员逐项一致，仅训练身份数变化，取点沿用冠军 epoch；
+    #         k=3 / member_topk=100 / 权重 [1,1,1,1,1,0.5,0.75,1] 全部沿用 final（无法重新调参）。
+    #   成员名后缀 _full = 全量数据版；final（2828 身份版，Final 0.6905）保留作回滚。
+    final_full:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 1.0
+      ship_reid_convnext_s_full: 0.5
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+
+    # 回退选项：仅锚点 + 异构分支
+    # 注意：成员池里的 ship_reid_vit 已切到 top-100 文件，而 sdfnet_ep80 仍是 top-10，
+    #       本预设因此是「混深度」，历史上的 0.6069（K=10/k=10）不再适用；
+    #       若需复现旧口径，请把 shipvit_pred 指回 ship_reid_vit/outputs/prediction.json 并设 k=10。
     anchor_plus_sv:
       sdfnet_ep80: 1.0
       ship_reid_vit: 1.0
@@ -73,24 +116,88 @@ ensemble:
   members:
     - name: sdfnet_mos75         # 锚点：MOS CMAL 重训最优（0.6118，E0 为 0.5888）
       ckpt: h:/Ship-Re-Identification/Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/logs/SDF-Net-mos/transformer_75.pth
-      pred: sims/test/pred_mos75.json
+      pred: sims/test/top100_mos75.json
     - name: sdfnet_ep80          # 旧锚点（0.5888），已被 sdfnet_mos75 替换；保留在池中以便回退
       ckpt: transformer_80.pth
       pred: sims/test/pred_ep80.json
     - name: sdfnet_ep45          # 两折交叉验证下最稳定的伙伴（0.0079 / 0.0073）
       ckpt: transformer_45.pth
-      pred: sims/test/pred_ep45.json
+      pred: sims/test/top100_ep45.json
     - name: sdfnet_ep25          # 次稳定伙伴
       ckpt: transformer_25.pth
-      pred: sims/test/pred_ep25.json
+      pred: sims/test/top100_ep25.json
     - name: ship_reid_vit        # 异构分支，提供跨架构多样性（TTA + rerank 后处理）
       ckpt: ""
-      pred: ship_reid_vit/outputs/prediction.json
+      pred: sims/test/top100_shipvit.json
+      vit_config: config/train_vit.yaml                    # 相对 shipvit_dir；由 16 号自动推理
+      vit_ckpt: outputs/checkpoints/best.pth               # 相对 shipvit_dir
+    - name: ship_reid_convnext_t # 波次2 新骨干：ConvNeXt-Tiny 双分支 ep80（TTA + rerank）
+      ckpt: ""
+      pred: sims/test/top100_convnext_t_ep080.json
+      vit_config: config/train_convnext_t.yaml             # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
+      vit_ckpt: outputs/screen_convnext_t/checkpoints/epoch_080.pth
+    - name: ship_reid_convnext_s # 波次3 新骨干：ConvNeXt-Small 双分支 ep60（TTA + rerank）
+      ckpt: ""
+      pred: sims/test/top100_convnext_s_ep060.json
+      vit_config: config/train_convnext_s.yaml             # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
+      vit_ckpt: outputs/screen_convnext_s/checkpoints/epoch_060.pth
+    - name: ship_reid_convnext_s_pure # 波次4：强配方（w_cm=1.0 对称）ConvNeXt-Small ep40（TTA + rerank）
+      ckpt: ""
+      pred: sims/test/top100_convnext_s_pure_ep040.json
+      vit_config: config/train_convnext_s_pure.yaml        # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
+      vit_ckpt: outputs/screen_convnext_s_pure/checkpoints/epoch_040.pth
+    - name: ship_reid_swin_s_v2    # 波次4：强配方（w_cm=1.0 对称）Swin-Small ep60，异构骨干（TTA + rerank）
+      ckpt: ""
+      pred: sims/test/top100_swin_s_v2_ep060.json
+      vit_config: config/train_swin_s_v2.yaml              # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
+      vit_ckpt: outputs/screen_swin_s_v2/checkpoints/epoch_060.pth
+
+    # ---- 波次5：全量数据（labels.csv 3534 身份/7422 图）重训版本 ----
+    #   与上面对应成员同骨干/同配方/同 seed，唯一变量为训练身份数；
+    #   ckpt 取冠军 epoch（vit ep100 / cnx_t ep80 / cnx_s ep60 / pure ep40 / swin_v2 ep60 / SDF-Net ep25、ep45、ep75）
+    - name: sdfnet_mos75_full
+      ckpt: h:/Ship-Re-Identification/Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/logs/SDF-Net-mos-full/transformer_75.pth
+      pred: sims/test_full/top100_mos75_full.json
+    - name: sdfnet_ep45_full
+      ckpt: h:/Ship-Re-Identification/Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/logs/SDF-Net-full/transformer_45.pth
+      pred: sims/test_full/top100_ep45_full.json
+    - name: sdfnet_ep25_full
+      ckpt: h:/Ship-Re-Identification/Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/logs/SDF-Net-full/transformer_25.pth
+      pred: sims/test_full/top100_ep25_full.json
+    - name: ship_reid_vit_full
+      ckpt: ""
+      pred: sims/test_full/top100_shipvit_full.json
+      vit_config: config/train_vit_full.yaml
+      vit_ckpt: outputs/full_vit/checkpoints/epoch_100.pth
+    - name: ship_reid_convnext_t_full
+      ckpt: ""
+      pred: sims/test_full/top100_convnext_t_ep080_full.json
+      vit_config: config/train_convnext_t_full.yaml
+      vit_ckpt: outputs/full_convnext_t/checkpoints/epoch_080.pth
+    - name: ship_reid_convnext_s_full
+      ckpt: ""
+      pred: sims/test_full/top100_convnext_s_ep060_full.json
+      vit_config: config/train_convnext_s_full.yaml
+      vit_ckpt: outputs/full_convnext_s/checkpoints/epoch_060.pth
+    - name: ship_reid_convnext_s_pure_full
+      ckpt: ""
+      pred: sims/test_full/top100_convnext_s_pure_ep040_full.json
+      vit_config: config/train_convnext_s_pure_full.yaml
+      vit_ckpt: outputs/full_convnext_s_pure/checkpoints/epoch_040.pth
+    - name: ship_reid_swin_s_v2_full
+      ckpt: ""
+      pred: sims/test_full/top100_swin_s_v2_ep060_full.json
+      vit_config: config/train_swin_s_v2_full.yaml
+      vit_ckpt: outputs/full_swin_s_v2/checkpoints/epoch_060.pth
 
 # 仅用于 18 号脚本回显本地验证基准，不参与流程
+# 折切分口径：scripts/b1_topk_probe.py::fold_split（各方向内部 folds[i % 2]，725/725）
+# 注：此处数值与旧版记录（0.6346 / 0.6131 / 0.6561）不可直接比较——旧版折切分已无法复现
 local_val:
   task: ../question6-data/traindata/local_val_task.json
   gt: ../question6-data/traindata/local_val_gt.json
-  final: "0.6346"
-  fold0: "0.6131"
-  fold1: "0.6561"
+  # 波次5 全量重训后**无无泄漏本地验证**（成员训练已见全部 3534 身份），故不提供数值。
+  # 下面 0.6905 / 0.7046 / 0.6764 是 final（2828 身份版）最后一次已验证基准，仅作参照。
+  final: "N/A (blind; exp_005 extrapolated +0.02~+0.04 vs final 0.6905)"
+  fold0: "N/A"
+  fold1: "N/A"

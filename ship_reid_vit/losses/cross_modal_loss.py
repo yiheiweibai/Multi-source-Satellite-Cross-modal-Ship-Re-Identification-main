@@ -46,11 +46,16 @@ class CrossModalInfoNCE(nn.Module):
     双向 CE：CE(M / temperature, labels) + CE(M.T / temperature, labels) 平均。
     positive 为同身份跨模态对、negative 为不同身份；仅计算双模态身份，
     支持批内同一身份多个样本（多 positive 按行归一化权重）。
+
+    w_os / w_so：方向权重（loss_os 的 anchor 为光学、loss_so 的 anchor 为 SAR）。
+    S2O 定向时提高 w_so。默认 1.0/1.0 与旧行为逐位一致。
     """
 
-    def __init__(self, temperature: float = 0.07) -> None:
+    def __init__(self, temperature: float = 0.07, w_os: float = 1.0, w_so: float = 1.0) -> None:
         super().__init__()
         self.temperature = temperature
+        self.w_os = float(w_os)
+        self.w_so = float(w_so)
 
     def forward(
         self, features: torch.Tensor, labels: torch.Tensor, modalities: torch.Tensor
@@ -66,7 +71,12 @@ class CrossModalInfoNCE(nn.Module):
         sim = o_n @ s_n.t() / self.temperature  # (No, Ns)
 
         log_os = F.log_softmax(sim, dim=1)
-        log_so = F.log_softmax(sim, dim=0)
+        # S→O：SAR anchor -> 光学 gallery，需按光学轴归一化。
+        # 直接对 sim.t() 做 log_softmax 得到 (Ns, No)，与 target_so 形状/语义一致；
+        # 旧的 F.log_softmax(sim, dim=0) 返回 (No, Ns)，与 (Ns, No) 的 target_so 逐元素相乘
+        # 属于语义错位（No≠Ns 时会抛形状错误；标签乱序时数值偏差约 27%）。
+        # 本项目 pk_k=2 时批内 o_lab==s_lab、pos 为单位阵，两者数值逐位相同。
+        log_so = F.log_softmax(sim.t(), dim=1)
 
         # 多 positive 目标权重矩阵：行/列内同身份样本均分
         pos = (o_lab.unsqueeze(1) == s_lab.unsqueeze(0)).float()  # (No, Ns)
@@ -75,7 +85,10 @@ class CrossModalInfoNCE(nn.Module):
 
         loss_os = -(target_os * log_os).sum(dim=1).mean()
         loss_so = -(target_so * log_so).sum(dim=1).mean()
-        return 0.5 * (loss_os + loss_so)
+        tot = self.w_os + self.w_so
+        if tot <= 0:
+            return features.new_tensor(0.0)
+        return (self.w_os * loss_os + self.w_so * loss_so) / tot
 
 
 class CrossModalHardTriplet(nn.Module):
@@ -83,13 +96,19 @@ class CrossModalHardTriplet(nn.Module):
 
     双向难样本挖掘：O→S（anchor=光学，正=同身份 SAR 最近，负=不同身份 SAR 最近）
     与 S→O 方向平均；某身份缺另一模态样本时该 anchor 自动跳过。
+
+    w_os / w_so：方向权重（S2O 定向时提高 anchor=SAR 的 w_so）。
     """
 
-    def __init__(self, margin: float = 0.3) -> None:
+    def __init__(self, margin: float = 0.3, w_os: float = 1.0, w_so: float = 1.0) -> None:
         super().__init__()
         self.margin = margin
+        self.w_os = float(w_os)
+        self.w_so = float(w_so)
 
     def forward(
         self, features: torch.Tensor, labels: torch.Tensor, modalities: torch.Tensor
     ) -> torch.Tensor:
-        return _cross_modal_hard_triplet(features, labels, modalities, margin=self.margin)
+        return _cross_modal_hard_triplet(
+            features, labels, modalities, margin=self.margin, w_os=self.w_os, w_so=self.w_so
+        )

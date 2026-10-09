@@ -23,8 +23,15 @@ class ComposedLoss(nn.Module):
             margin=getattr(cfg, "triplet_margin", 0.3),
             adaptive_margin=getattr(cfg, "adaptive_margin", False),
         )
-        self.cm_infonce = CrossModalInfoNCE(temperature=getattr(cfg, "cm_temperature", 0.07))
-        self.cm_triplet = CrossModalHardTriplet(margin=getattr(cfg, "cm_margin", 0.3))
+        # 跨模态损失方向权重：cm_dir_w_so 对应 anchor=SAR 的 S→O 方向（竞赛 S2O 方向）
+        cm_w_os = getattr(cfg, "cm_dir_w_os", 1.0)
+        cm_w_so = getattr(cfg, "cm_dir_w_so", 1.0)
+        self.cm_infonce = CrossModalInfoNCE(
+            temperature=getattr(cfg, "cm_temperature", 0.07), w_os=cm_w_os, w_so=cm_w_so
+        )
+        self.cm_triplet = CrossModalHardTriplet(
+            margin=getattr(cfg, "cm_margin", 0.3), w_os=cm_w_os, w_so=cm_w_so
+        )
         self.w_supcon = getattr(cfg, "w_supcon", 0.5)
         self.w_triplet = getattr(cfg, "w_triplet", 0.3)
         self.w_ce = getattr(cfg, "w_ce", 1.0)

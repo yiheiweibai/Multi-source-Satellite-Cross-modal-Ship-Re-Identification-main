@@ -38,6 +38,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight", type=str, required=True, help="SDF-Net weights (official or fine-tuned)")
     p.add_argument("--task_json", type=str, required=True, help="赛题 task.json")
     p.add_argument("--out_prediction", type=str, default="prediction_sdfnet.json")
+    p.add_argument("--topk", type=int, default=10,
+                   help="每条 query 写出的候选数（赛题提交为 10；深 top-K 成员融合可放大）")
     p.add_argument("--save_sim", type=str, default="", help="导出 sim.npy/meta.json 的目录（跨模型融合用）")
     p.add_argument("--tta", action="store_true", help="水平翻转 TTA")
     p.add_argument("--rerank", action="store_true", help="k-reciprocal 重排序")
@@ -247,9 +249,9 @@ def main() -> None:
         cand = [i for i, g in enumerate(gallery) if g["modality"] == target_mod]
         q_abs_self = str(Path(q["image_path_abs"]).resolve())
         cand = [i for i in cand if g_abs[i] != q_abs_self]
-        if len(cand) < 10:
-            raise RuntimeError(f"query {q['query_id']} 候选仅 {len(cand)} 个，不足 10")
-        top = sim[qi, torch.tensor(cand)].topk(10).indices.tolist()
+        if len(cand) < args.topk:
+            raise RuntimeError(f"query {q['query_id']} 候选仅 {len(cand)} 个，不足 {args.topk}")
+        top = sim[qi, torch.tensor(cand)].topk(args.topk).indices.tolist()
         prediction[q["query_id"]] = [gallery[cand[t]]["image_id"] for t in top]
 
     with open(args.out_prediction, "w", encoding="utf-8") as f:

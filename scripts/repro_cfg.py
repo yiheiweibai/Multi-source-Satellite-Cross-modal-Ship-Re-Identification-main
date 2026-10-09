@@ -11,7 +11,8 @@ ensemble.presets 是「预设名 -> {成员名: 权重}」，ensemble.active 选
 成员与权重按预设内的书写顺序绑定，由本脚本解析，不经过 shell。
 
 子命令：
-    dump  [--env-out PATH]  写出 set 变量的 .bat 与同名 _steps.txt（逐 checkpoint 推理步骤）
+    dump  [--env-out PATH]  写出 set 变量的 .bat，以及同名 _steps.txt（15 号 SDF-Net 推理步骤）
+                            与 _vitsteps.txt（16 号 ship_reid_* 推理步骤）
     check                校验当前预设所需的输入是否齐备（缺任一则退出码 1）
     fuse                 按当前预设执行 RRF 融合并写出最终 prediction.json
     show                 打印解析后的完整配置（含成员池与全部预设）
@@ -46,6 +47,12 @@ def resolve(value: str) -> Path:
     """相对路径一律相对工程根目录解析。"""
     p = Path(value)
     return p.resolve() if p.is_absolute() else (SHIP_DIR / p).resolve()
+
+
+def under(base: Path, value: str) -> Path:
+    """ship_reid_vit 系成员（vit_config / vit_ckpt）的相对路径相对 shipvit_dir 解析。"""
+    p = Path(value)
+    return p.resolve() if p.is_absolute() else (base / p).resolve()
 
 
 def disp_len(s: str) -> int:
@@ -103,10 +110,11 @@ def resolve_members(cfg: dict, preset: str = "", weights: list | None = None) ->
 
 
 def build(cfg: dict, preset: str = "", weights: list | None = None):
-    """返回 (变量字典, 推理步骤, 融合成员, 预设名)。
+    """返回 (变量字典, 推理步骤, vit 推理步骤, 融合成员, 预设名)。
 
-    steps   元素为 (成员名, ckpt绝对路径, 预测输出绝对路径)   —— 必须本地推理的成员
-    members 元素为 (成员名, 预测绝对路径, 权重)              —— 当前预设的全部成员
+    steps     元素为 (成员名, ckpt绝对路径, 预测输出绝对路径)        —— 由 15 号推理
+    vit_steps 元素为 (成员名, config绝对路径, ckpt绝对路径, 预测输出绝对路径) —— 由 16 号推理
+    members   元素为 (成员名, 预测绝对路径, 权重)                    —— 当前预设的全部成员
     """
     p, ens = cfg["paths"], cfg["ensemble"]
     sdfnet_dir = resolve(p["sdfnet_dir"])
@@ -123,13 +131,13 @@ def build(cfg: dict, preset: str = "", weights: list | None = None):
         "SDF_CKPT_DIR": str(ckpt_dir),
         "SDF_SIM_DIR": str(resolve(p["sdf_sim_dir"])),
         "TEST_TASK": str(resolve(p["test_task"])),
-        "SHIPVIT_DIR": str(shipvit_dir),
-        "SHIPVIT_PY": str(shipvit_dir / "venv" / "Scripts" / "python.exe"),
-        "SHIPVIT_CKPT": str(shipvit_dir / "outputs" / "checkpoints" / "best.pth"),
+        "VIT_DIR": str(shipvit_dir),
+        "VIT_PY": str(shipvit_dir / "venv" / "Scripts" / "python.exe"),
         "SHIPVIT_PRED": str(resolve(p["shipvit_pred"])),
         "OUT_PRED": str(resolve(p["out_prediction"])),
         "RRF_K": str(ens["k"]),
         "RRF_TOP_K": str(ens["topk"]),
+        "RRF_MEMBER_TOPK": str(ens.get("member_topk", ens["topk"])),
         "RRF_PRESET": preset_name,
         "LOCAL_VAL_TASK": str(resolve(cfg.get("local_val", {}).get("task", ""))),
         "LOCAL_VAL_FINAL": str(cfg.get("local_val", {}).get("final", "")),
@@ -137,30 +145,38 @@ def build(cfg: dict, preset: str = "", weights: list | None = None):
         "LOCAL_VAL_FOLD1": str(cfg.get("local_val", {}).get("fold1", "")),
     }
 
-    # 当前预设是否用到 ship_reid_vit 分支（按预测路径判定，不依赖成员名）
-    v["SHIPVIT_NEEDED"] = "1" if any(p == v["SHIPVIT_PRED"] for _, p, _ in members) else "0"
-
     steps = []
+    vit_steps = []
     for mname, pred, _ in members:
-        ck = pool[mname].get("ckpt")
+        m = pool[mname]
+        ck = m.get("ckpt")
         if ck:
             steps.append((mname, str(ckpt_dir / ck), pred))
+        vc = m.get("vit_ckpt")
+        if vc:
+            vit_steps.append((
+                mname,
+                str(under(shipvit_dir, m.get("vit_config") or "config/train_vit.yaml")),
+                str(under(shipvit_dir, vc)),
+                pred,
+            ))
 
     v["SDF_N"] = str(len(steps))
+    v["VIT_N"] = str(len(vit_steps))
     v["RRF_N"] = str(len(members))
     v["RRF_MEMBERS"] = " ".join("{}({})".format(n, w) for n, _, w in members)
     v["RRF_WEIGHTS"] = " ".join(str(w) for _, _, w in members)
-    return v, steps, members, preset_name
+    return v, steps, vit_steps, members, preset_name
 
 
-def required_items(v: dict, steps: list, members: list) -> list:
+def required_items(v: dict, steps: list, vit_steps: list, members: list) -> list:
     """(说明, 路径, 是否必须)。
 
-    有 ckpt 的成员由 15 号脚本本地推理生成；无 ckpt 的成员（如 ship_reid_vit）
-    其预测必须已存在，或由 16 号脚本补出。
+    有 ckpt 的成员由 15 号本地推理生成；有 vit_ckpt 的成员由 16 号本地推理生成；
+    两者皆空的成员，其预测必须已经存在。
     """
     generated = {n for n, _, _ in steps}
-    shipvit_active = v.get("SHIPVIT_NEEDED", "1") == "1"
+    vit_generated = {n for n, _, _, _ in vit_steps}
 
     items = [
         ("SDF-Net venv python", Path(v["REPRO_DIR"]) / ".venv-sdfnet" / "Scripts" / "python.exe", True),
@@ -168,19 +184,20 @@ def required_items(v: dict, steps: list, members: list) -> list:
         ("SDF-Net official weight", Path(v["SDFNET_OFFICIAL"]), True),
         ("competition test task.json", Path(v["TEST_TASK"]), True),
     ]
-    if shipvit_active:
-        items += [
-            ("ship_reid_vit venv python", Path(v["SHIPVIT_PY"]), True),
-            ("ship_reid_vit best.pth", Path(v["SHIPVIT_CKPT"]), True),
-        ]
+    if vit_steps:
+        items += [("ship_reid venv python", Path(v["VIT_PY"]), True)]
+        items += [("ship_reid ckpt {}".format(n), Path(c), True) for n, _, c, _ in vit_steps]
     items += [("SDF-Net ckpt {}".format(n), Path(c), True) for n, c, _ in steps]
-    items += [("member pred {}".format(n), Path(p), n not in generated)
+    # 由 15 号（有 ckpt）或 16 号（有 vit_ckpt）本地推理产出的成员预测
+    # 一律不列为必需，否则全新复现时第 1 步环境自检必然失败。
+    items += [("member pred {}".format(n), Path(p),
+               n not in generated and n not in vit_generated)
               for n, p, _ in members]
     items += [("final submission (auto by step 17)", Path(v["OUT_PRED"]), False)]
     return items
 
 
-def do_dump(v: dict, steps: list, out: Path) -> int:
+def do_dump(v: dict, steps: list, vit_steps: list, out: Path) -> int:
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="ascii", newline="\r\n") as f:
@@ -192,17 +209,22 @@ def do_dump(v: dict, steps: list, out: Path) -> int:
         with open(steps_path, "w", encoding="ascii", newline="\n") as f:
             for name, ckpt, pred in steps:
                 f.write("{}|{}|{}\n".format(name, ckpt, pred))
+        vit_steps_path = out.with_name(out.stem + "_vitsteps.txt")
+        with open(vit_steps_path, "w", encoding="ascii", newline="\n") as f:
+            for name, cfg_path, ckpt, pred in vit_steps:
+                f.write("{}|{}|{}|{}\n".format(name, cfg_path, ckpt, pred))
     except UnicodeEncodeError as e:
         print("[repro_cfg] 路径含非 ASCII 字符，无法写出 cmd 脚本: {}".format(e))
         return 1
     print("[repro_cfg] preset: {}".format(v["RRF_PRESET"]))
     print("[repro_cfg] env   -> {}".format(out))
-    print("[repro_cfg] steps -> {}".format(steps_path))
+    print("[repro_cfg] steps -> {}  ({} SDF-Net)".format(steps_path, v["SDF_N"]))
+    print("[repro_cfg] vit   -> {}  ({} ship_reid)".format(vit_steps_path, v["VIT_N"]))
     return 0
 
 
-def do_check(v: dict, steps: list, members: list) -> int:
-    items = required_items(v, steps, members)
+def do_check(v: dict, steps: list, vit_steps: list, members: list) -> int:
+    items = required_items(v, steps, vit_steps, members)
     width = max(disp_len(desc) for desc, _, _ in items)
     missing = []
     print("active preset: {}  ({} members)".format(v["RRF_PRESET"], v["RRF_N"]))
@@ -260,7 +282,7 @@ def do_fuse(v: dict, members: list, out_path: str = "") -> int:
     return 0
 
 
-def do_show(v: dict, steps: list, cfg: dict) -> int:
+def do_show(v: dict, steps: list, vit_steps: list, cfg: dict) -> int:
     width = max(disp_len(k) for k in v)
     for k in sorted(v):
         print("{}{} = {}".format(k, " " * (width - disp_len(k)), v[k]))
@@ -280,6 +302,10 @@ def do_show(v: dict, steps: list, cfg: dict) -> int:
     print("\nSDF-Net inference steps for the active preset ({}):".format(len(steps)))
     for name, ckpt, pred in steps:
         print("  {} -> {}".format(name, Path(pred).name))
+
+    print("\nship_reid inference steps for the active preset ({}):".format(len(vit_steps)))
+    for name, cfg_path, ckpt, pred in vit_steps:
+        print("  {:<20} cfg={:<32} -> {}".format(name, Path(cfg_path).name, Path(pred).name))
     return 0
 
 
@@ -302,7 +328,7 @@ def main() -> int:
         return 1
 
     cfg = load(cfg_path)
-    v, steps, members, _ = build(cfg, args.preset, args.weights)
+    v, steps, vit_steps, members, _ = build(cfg, args.preset, args.weights)
 
     if args.cmd == "dump":
         if args.env_out:
@@ -311,12 +337,12 @@ def main() -> int:
             import os
             tmp = os.environ.get("TEMP") or os.environ.get("TMP") or "."
             out = Path(tmp) / "shipreid_repro_env.bat"
-        return do_dump(v, steps, out)
+        return do_dump(v, steps, vit_steps, out)
     if args.cmd == "check":
-        return do_check(v, steps, members)
+        return do_check(v, steps, vit_steps, members)
     if args.cmd == "fuse":
         return do_fuse(v, members, args.out)
-    return do_show(v, steps, cfg)
+    return do_show(v, steps, vit_steps, cfg)
 
 
 if __name__ == "__main__":

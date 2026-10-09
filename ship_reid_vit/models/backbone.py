@@ -76,10 +76,11 @@ class DualBranchResNet(nn.Module):
         out = torch.empty(x.size(0), self.out_dim, device=x.device, dtype=x.dtype)
         if opt_idx.numel() > 0:
             f = self.optical_encoder(x[opt_idx])
-            out[opt_idx] = self.shared(f).flatten(1)
+            # AMP 下卷积输出为 fp16，而 out 依输入图像 dtype 为 fp32，需显式对齐
+            out[opt_idx] = self.shared(f).flatten(1).to(out.dtype)
         if sar_idx.numel() > 0:
             f = self.sar_encoder(x[sar_idx])
-            out[sar_idx] = self.shared(f).flatten(1)
+            out[sar_idx] = self.shared(f).flatten(1).to(out.dtype)
         return out
 
 
@@ -183,6 +184,17 @@ def build_backbone(cfg) -> nn.Module:
             pretrained=use_pretrained,
             pretrained_path=pretrained_path if has_local else "",
             backbone_name=name,
+        )
+    elif name.startswith("convnext") or name.startswith("swin"):
+        # 延迟 import，避免影响 ViT/ResNet 现有路径
+        from .backbone_extra import DualBranchConvNeXt, DualBranchSwin
+
+        cls = DualBranchConvNeXt if name.startswith("convnext") else DualBranchSwin
+        model = cls(
+            backbone_name=name,
+            split_idx=getattr(cfg, "split_idx", 2),
+            pretrained=use_pretrained,
+            pretrained_path=pretrained_path if has_local else "",
         )
     else:
         model = DualBranchResNet(
