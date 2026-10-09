@@ -17,13 +17,13 @@
 | 本地验证 Final | **0.6346**（fold0 0.6131 / fold1 0.6561） |
 | 单模型冠军基线 | E0 = SDF-Net ep80：0.5888 |
 | 最终提交文件 | `h:\Ship-Re-Identification\prediction.json` |
-| 项目 Git | **无 Git 仓库**，任何改动/删除不可逆 |
+| 项目 Git | 本维护副本为 **Git 仓库**；README 内 `h:\...` 为部署机路径（部署机可无 Git） |
 
 ---
 
 ## 2. 目录结构（与磁盘一致）
 
-工程根目录 = `h:\Ship-Re-Identification\Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main\`（已扁平化，**没有** `ship_reid_system/` 这一层）。
+工程根目录 = `h:\Ship-Re-Identification\Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main\`（部署机布局；本维护副本根目录与该布局一致，另并存 `ship_reid_system/` 历史布局，见本节省末说明）。
 
 ```
 h:\Ship-Re-Identification\
@@ -72,6 +72,8 @@ h:\Ship-Re-Identification\
     ├── experiments\                    实验记录 CSV
     └── *.official.md                   赛题官方起始模板（只读，已过期）
 ```
+
+> **并存目录 `ship_reid_system/`**：本仓库同时保留本地历史迭代布局 `ship_reid_system/`（含 01~19 全套 bat、`13_sdfnet_plan.bat` 统一方案入口、`configs/reproduce.yaml`、`experiments/` 实验记录等），与上文根目录扁平布局**并存且均纳入版本控制**。README 正文按根目录扁平布局（复现链路）编写，`ship_reid_system/` 供对照与复跑历史实验。
 
 ---
 
@@ -242,7 +244,7 @@ ship_reid_vit\01_setup.bat ──►  ship_reid_vit\venv
 | 事项 | 说明 |
 |---|---|
 | 16 号默认复用 | 已有 `ship_reid_vit\outputs\prediction.json` 时不重跑；要重跑加 `force` |
-| 无 Git | 项目**无 Git 仓库**，删除/改动不可逆，操作前自行备份 |
+| Git 仓库 | 本维护副本为 Git 仓库；部署机 `h:\...` 上可无 Git。任何删除/改动均不可逆，操作前自行备份 |
 | 路径统一 | 所有相对路径一律相对工程根目录解析（`scripts\repro_cfg.py::resolve`）；bat 里不写死路径 |
 | 唯一事实来源 | 改成员/权重/k 只改 `configs\reproduce.yaml` 的 `ensemble.members` / `ensemble.presets` / `ensemble.active` / `k` / `topk` |
 | 成员定义 | `{name, ckpt, pred}`；`ckpt` 相对 `sdf_checkpoint_dir`（留空 = 复用已有预测、不做本地推理）；`pred` 相对工程根目录 |
