@@ -36,10 +36,14 @@ ship_reid_system/data/annotations/val.json
 # 推理产物
 prediction.json
 
-# 第三方仓库 SDF-Net（官方克隆，独立 .git；复现材料由 README 披露克隆地址与 commit，不并入主仓库）
-ship_reid_system/SDF-Net/
 # SDF-Net 数据/权重/日志（12_sdfnet_* 生成，体积大不入库）
+ship_reid_system/SDF-Net/data/
+ship_reid_system/SDF-Net/logs/
 ship_reid_system/data/
 ship_reid_system/logs/
 ship_reid_system/sims/
 ship_reid_system/identity_map.json
+ship_reid_system/.venv-sdfnet/
+ship_reid_system/ship_reid_vit/venv/
+ship_reid_system/ship_reid_vit/outputs/
+ship_reid_system/ship_reid_vit/weights/

@@ -3,7 +3,7 @@
 用法：
     python scripts/sdfnet_download_weights.py [--out <路径>]
 
-默认输出：ship_reid_system/SDF-Net/logs/SDF-Net/SDF-Net.pth
+默认输出：SDF-Net/logs/SDF-Net/SDF-Net.pth
 """
 from __future__ import annotations
 

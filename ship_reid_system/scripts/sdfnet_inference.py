@@ -1,18 +1,16 @@
 """SDF-Net 推理 + 后处理，生成赛题提交 prediction.json（本地验证协议）。
 
-与 TransOSS 推理脚本（scripts/transoss_inference.py）保持同一套接口与后处理算法，
-保证跨模型对比与融合公平：
+后处理与本赛题统一协议一致：
   - 按 query_type 分组后处理（O2S 只在 SAR gallery 上 rerank/QE，S2O 只在 optical
-    gallery 上，O2O 只在 optical gallery 且排除 query 自身图像）——与修复后的
-    transoss_inference.py 完全一致；
+    gallery 上，O2O 只在 optical gallery 且排除 query 自身图像）；
   - SAR 图像保持三通道灰度复制形式（赛题硬约束），不做 GRAY2RGB 转换；
   - 支持 --save_sim 导出 q×g 相似度矩阵与元数据，供跨模型融合脚本使用。
 
 用法（在 SDF-Net 仓库根目录运行）：
     python ..\\scripts\\sdfnet_inference.py \
         --config_file configs/SDF-Net.yml \
-        --weight logs/SDF-Net/SDF-Net.pth \
-        --task_json ..\\..\\赛题6-初赛\\训练数据\\local_val_task.json \
+        --weight logs/SDF-Net/SDF-Net_256.pth \
+        --task_json ..\\..\\question6-data\\traindata\\local_val_task.json \
         --out_prediction prediction_sdfnet.json \
         --save_sim sims/sdfnet
 
@@ -61,17 +59,50 @@ def load_task(task_path: str):
     return task
 
 
+def wh3(w: float, h: float) -> list:
+    """SDF-Net 官方尺寸嵌入（datasets/bases.py::get_image）：
+    (w/93-0.434)/0.031, (h/427-0.461)/0.031, h/w
+    """
+    return [(w / 93 - 0.434) / 0.031,
+            (h / 427 - 0.461) / 0.031,
+            h / w]
+
+
+class SDFImageDataset(torch.utils.data.Dataset):
+    """模块级 Dataset（Windows spawn 多进程下必须可 pickle）。"""
+
+    def __init__(self, paths, mods, transform):
+        self.paths = paths
+        self.mods = mods
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        from PIL import Image
+        # SAR 三通道灰度复制形式原样保留（赛题硬约束），统一 convert("RGB")
+        img = Image.open(self.paths[idx]).convert("RGB")
+        w, h = img.size
+        # optical 按官方 get_image 乘 0.75；SAR 对应官方 SAR 分支使用原始尺寸
+        if self.mods[idx] == 1:
+            img_wh = wh3(w, h)
+        else:
+            img_wh = wh3(w * 0.75, h * 0.75)
+        return self.transform(img), self.mods[idx], torch.tensor(img_wh, dtype=torch.float32)
+
+
 @torch.no_grad()
 def extract_features(model, image_paths: list[str], modalities: list[int], cfg, device,
                      tta: bool, batch_size: int, num_workers: int):
     """用 SDF-Net 提取特征。modalities: 0=optical, 1=sar。
 
-    与 TransOSS 推理一致：PIL 读图 convert("RGB")，SAR 三通道灰度复制原样保留；
-    img_wh 使用与 transoss_inference.py 相同的简化尺寸嵌入 [size[1], size[0]]。
+    读图统一 PIL convert("RGB")，SAR 三通道灰度复制原样保留；
+    img_wh 复刻 SDF-Net 官方 datasets/bases.py::get_image 的 3 维尺寸嵌入
+    （wh_embed = WHPatchEmbedding(3, 768)），optical 与官方一致乘 0.75，SAR 用原始尺寸。
     """
-    from PIL import Image
     from torchvision import transforms as T
-    from torch.utils.data import DataLoader, Dataset
+    from torch.utils.data import DataLoader
 
     size = cfg.INPUT.SIZE_TEST  # [256, 128]（SDF-Net.yml 默认，与官方配置一致）
     transform = T.Compose([
@@ -80,27 +111,14 @@ def extract_features(model, image_paths: list[str], modalities: list[int], cfg, 
         T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
     ])
 
-    class ImgDataset(Dataset):
-        def __init__(self, paths, mods):
-            self.paths = paths
-            self.mods = mods
-
-        def __len__(self):
-            return len(self.paths)
-
-        def __getitem__(self, idx):
-            # SAR 三通道灰度复制形式原样保留（赛题硬约束），统一 convert("RGB")
-            img = Image.open(self.paths[idx]).convert("RGB")
-            return transform(img), self.mods[idx]
-
-    loader = DataLoader(ImgDataset(image_paths, modalities), batch_size=batch_size,
-                        shuffle=False, num_workers=num_workers)
+    loader = DataLoader(SDFImageDataset(image_paths, modalities, transform),
+                        batch_size=batch_size, shuffle=False, num_workers=num_workers)
     feats = []
     model.eval()
-    for imgs, mods in loader:
+    for imgs, mods, img_wh in loader:
         imgs = imgs.to(device)
         camids = mods.to(device)
-        img_wh = torch.tensor([[size[1], size[0]]] * imgs.size(0), dtype=torch.float32).to(device)
+        img_wh = img_wh.to(device)
         feat = model(imgs, cam_label=camids, img_wh=img_wh)
         if isinstance(feat, tuple):
             feat = feat[0]
@@ -114,7 +132,7 @@ def extract_features(model, image_paths: list[str], modalities: list[int], cfg, 
     return F.normalize(torch.cat(feats), dim=1)
 
 
-# ---- 后处理函数（与 transoss_inference.py 完全一致，保证对比公平）----
+# ---- 后处理函数 ----
 def k_reciprocal_rerank(q, g, k1=20, k2=6, lambda_value=0.3):
     import numpy as np  # noqa: F401
     Q, G = q.size(0), g.size(0)
@@ -182,7 +200,7 @@ def main() -> None:
                                args.batch_size, args.num_workers)
     print(f"q_feats: {q_feats.shape}, g_feats: {g_feats.shape}")
 
-    # 按 query_type 分组后处理（与修复后的 transoss_inference.py 同逻辑）：
+    # 按 query_type 分组后处理：
     # rerank/QE 仅在目标候选模态子集内进行；O2O 额外排除 query 自身图像。
     sim = torch.zeros(q_feats.size(0), g_feats.size(0), dtype=torch.float32)
     g_abs = [str(Path(g["image_path_abs"]).resolve()) for g in gallery]

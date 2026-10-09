@@ -1,127 +1,143 @@
 @echo off
-chcp 65001 >nul
-REM 12_sdfnet_setup.bat - SDF-Net 环境准备（一键：依赖 / 官方权重 / HOSS 数据转换）
-REM   1. 创建独立虚拟环境 .venv-sdfnet（Python 3.9+，与 TransOSS 的 .venv 隔离，避免 timm 版本冲突）
-REM   2. 安装 PyTorch 2.2.2+cu118 与 SDF-Net 其余依赖（timm / yacs / opencv-python / Pillow 等）
-REM   3. 克隆官方仓库 https://github.com/cfrfree/SDF-Net 到 SDF-Net\（已存在则跳过）
-REM   4. 下载官方预训练权重 SDF-Net.pth（HuggingFace: Chenfree233/SDF-Net，已存在则跳过）
-REM   5. 将赛题训练数据转换为 HOSS 目录结构 data\HOSS\{bounding_box_train,bounding_box_test,query}
-REM      优先复用已存在的 local_val_task.json（不重新划分），保证与 09/11 结果横向可比
-REM 说明：
-REM   - SDF-Net 要求 Python 3.9+ / PyTorch 2.2.2+cu118；本脚本面向 16GB 显存机器
-REM     （SDF-Net.yml 默认 IMS_PER_BATCH=32 在该显存下可训练，若 OOM 请用
-REM       set SDF_IMS_PER_BATCH=16 后再运行 12_sdfnet_finetune.bat）
-REM   - 若本机无 NVIDIA GPU，cu118 安装会失败，可用 CPU 版 torch 做零训练推理初判
-REM     （速度较慢），训练请在 GPU 机器上执行
+REM 12_sdfnet_setup.bat - SDF-Net environment preparation (venv / deps / official weights / HOSS data)
+REM   1. Create an isolated venv .venv-sdfnet (separate from the TransOSS .venv to avoid timm conflicts)
+REM   2. Install PyTorch 2.2.2+cu118, torchvision 0.17.2+cu118 and the remaining SDF-Net dependencies
+REM   3. Clone https://github.com/cfrfree/SDF-Net into SDF-Net\ (skip if the folder already exists)
+REM   4. Download the official weights SDF-Net.pth (skip if it already exists)
+REM      Note: the official checkpoint is trained at 256x128, so its pos_embed is
+REM      [1,130,768] and it CANNOT be used directly with 256x256 input.
+REM   5. Derive the 256x256 variant SDF-Net_256.pth (skip if it already exists)
+REM      via scripts\sdfnet_resize_posembed.py (pos_embed bilinear 256x128 -> 256x256)
+REM   6. Convert the competition data into the HOSS layout:
+REM        SDF-Net\data\HOSS\{bounding_box_train,bounding_box_test,query}
+REM      The existing local_val_task.json is reused (no re-split) so results stay comparable.
+REM Notes:
+REM   - Data directory can be overridden with the SDF_DATA_DIR environment variable.
+REM   - SDF-Net.yml default IMS_PER_BATCH=32 fits a 16GB GPU. If you get OOM,
+REM     lower IMS_PER_BATCH in the yaml (19_mos_retrain.bat trains with the same yaml).
 cd /d "%~dp0"
 
 set ROOT=%~dp0
 set SDF_DIR=%ROOT%SDF-Net
 set PY=%ROOT%.venv-sdfnet\Scripts\python.exe
-set DATA_DIR=%ROOT%..\赛题6-初赛\训练数据
+if defined SDF_DATA_DIR (set DATA_DIR=%SDF_DATA_DIR%) else (set DATA_DIR=%ROOT%..\赛题6-初赛\训练数据)
 set TASK_JSON=%DATA_DIR%\local_val_task.json
 set WEIGHT=%SDF_DIR%\logs\SDF-Net\SDF-Net.pth
+set WEIGHT_256=%SDF_DIR%\logs\SDF-Net\SDF-Net_256.pth
+set HOSS_DIR=%SDF_DIR%\data\HOSS
 
-echo [12] SDF-Net 环境准备开始...
+echo [12] SDF-Net setup start...
 
-REM ---- 1. 检查系统 Python 版本 ----
+REM ---- 1. check system python ----
 where python >nul 2>nul
 if errorlevel 1 (
-    echo [12] 未找到 python，请先安装 Python 3.9+ 并加入 PATH。
+    echo [12] python not found. Please install Python 3.9+ and add it to PATH.
     pause
     exit /b 1
 )
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
-echo [12] 系统 Python 版本: %PYVER%
+echo [12] system python: %PYVER%
 
-REM ---- 2. 创建虚拟环境（已存在则跳过）----
+REM ---- 2. create venv (skip if present) ----
 if exist "%PY%" (
-    echo [12] 虚拟环境已存在: .venv-sdfnet
+    echo [12] venv already exists: .venv-sdfnet
 ) else (
-    echo [12] 创建虚拟环境 .venv-sdfnet ...
+    echo [12] creating venv .venv-sdfnet ...
     python -m venv "%ROOT%.venv-sdfnet"
     if errorlevel 1 (
-        echo [12] 创建虚拟环境失败。
+        echo [12] failed to create venv.
         pause
         exit /b 1
     )
 )
 
-REM ---- 3. 安装依赖：先 cu118 版 torch/torchvision，再安装其余依赖 ----
+REM ---- 3. install dependencies ----
 "%PY%" -m pip install --upgrade pip >nul
-echo [12] 安装 PyTorch 2.2.2+cu118 / torchvision 0.17.2+cu118 ...
+echo [12] installing torch 2.2.2+cu118 / torchvision 0.17.2+cu118 ...
 "%PY%" -m pip install torch==2.2.2+cu118 torchvision==0.17.2+cu118 --index-url https://download.pytorch.org/whl/cu118
 if errorlevel 1 (
-    echo [12] cu118 安装失败。若本机无 NVIDIA GPU，可改用 CPU 版仅做零训练推理：
+    echo [12] cu118 install failed. On a machine without an NVIDIA GPU use the CPU build instead:
     echo     "%PY%" -m pip install torch==2.2.2 torchvision==0.17.2
-    echo     然后重新运行本脚本；训练仍需在 GPU 机器完成。
+    echo     then re-run this script. Training still requires a GPU machine.
     pause
     exit /b 1
 )
-echo [12] 安装 SDF-Net 其余依赖（timm/yacs/opencv-python/Pillow 等）...
-if exist "%SDF_DIR%\requirements.txt" (
-    findstr /V /C:"torch" "%SDF_DIR%\requirements.txt" > "%ROOT%temp\sdfnet_req_no_torch.txt"
-    "%PY%" -m pip install -r "%ROOT%temp\sdfnet_req_no_torch.txt"
-    if errorlevel 1 (
-        echo [12] 依赖安装失败，请查看上方错误。
-        pause
-        exit /b 1
-    )
+echo [12] installing remaining dependencies (numpy / opencv-python / Pillow / thop / timm / yacs) ...
+"%PY%" -m pip install numpy==1.25.0 opencv-python==4.11.0.86 Pillow==11.3.0 thop==0.1.1.post2209072238 timm==1.0.25 yacs==0.1.8
+if errorlevel 1 (
+    echo [12] dependency install failed, see the errors above.
+    pause
+    exit /b 1
 )
 
-REM ---- 4. 克隆 SDF-Net 仓库（已存在则跳过）----
-if exist "%SDF_DIR%\.git" (
-    echo [12] SDF-Net 仓库已存在，跳过克隆。
+REM ---- 4. clone the SDF-Net repository (skip if present) ----
+if exist "%SDF_DIR%\train.py" (
+    echo [12] SDF-Net repo already present, skip clone.
 ) else (
-    echo [12] 克隆 https://github.com/cfrfree/SDF-Net ...
+    echo [12] cloning https://github.com/cfrfree/SDF-Net ...
     git clone https://github.com/cfrfree/SDF-Net "%SDF_DIR%"
     if errorlevel 1 (
-        echo [12] 克隆失败，请检查网络。
+        echo [12] clone failed, please check the network.
         pause
         exit /b 1
     )
 )
 
-REM ---- 5. 下载官方预训练权重（已存在则跳过）----
+REM ---- 5. download the official weights (skip if present) ----
 if exist "%WEIGHT%" (
-    echo [12] 官方权重已存在: %WEIGHT%
+    echo [12] official weights already present: %WEIGHT%
 ) else (
-    echo [12] 下载官方预训练权重 SDF-Net.pth（HuggingFace: Chenfree233/SDF-Net，约 333MB）...
+    echo [12] downloading official weights SDF-Net.pth (about 333MB) ...
     "%PY%" scripts\sdfnet_download_weights.py --out "%WEIGHT%"
     if errorlevel 1 (
-        echo [12] 权重下载失败。可手动下载后放置到:
+        echo [12] weight download failed. Place the file manually at:
         echo     %WEIGHT%
         pause
         exit /b 1
     )
 )
 
-REM ---- 6. 数据转换：赛题数据 -^> HOSS 目录结构（存在则跳过）----
-if exist "%ROOT%data\HOSS\bounding_box_train" (
-    echo [12] HOSS 数据已存在，跳过转换: data\HOSS\{bounding_box_train,bounding_box_test,query}
+REM ---- 6. derive the 256x256 variant (official weights are trained at 256x128) ----
+if exist "%WEIGHT_256%" (
+    echo [12] 256x256 weights already present: %WEIGHT_256%
+) else (
+    echo [12] resizing pos_embed from 256x128 to 256x256 ...
+    "%PY%" scripts\sdfnet_resize_posembed.py --in_weight "%WEIGHT%" --out_weight "%WEIGHT_256%"
+    if errorlevel 1 (
+        echo [12] pos_embed resize failed. The final flow requires this file:
+        echo     %WEIGHT_256%
+        pause
+        exit /b 1
+    )
+)
+
+REM ---- 7. convert competition data into the HOSS layout (skip if present) ----
+if exist "%HOSS_DIR%\bounding_box_train" (
+    echo [12] HOSS data already present, skip conversion: %HOSS_DIR%
 ) else (
     if not exist "%TASK_JSON%" (
-        echo [12] 未找到 local_val_task.json，请先运行 09_local_val_transoss.bat 或手动生成验证集。
+        echo [12] local_val_task.json not found: %TASK_JSON%
         pause
         exit /b 1
     )
     if not exist "%DATA_DIR%\labels_train.csv" (
-        echo [12] 未找到 labels_train.csv，请先运行 09_local_val_transoss.bat 生成训练子集。
+        echo [12] labels_train.csv not found: %DATA_DIR%\labels_train.csv
         pause
         exit /b 1
     )
-    echo [12] 转换赛题数据为 HOSS 结构（复用 local_val_task.json，不重新划分）...
-    "%PY%" scripts\sdfnet_prepare_data.py --labels_train "%DATA_DIR%\labels_train.csv" --labels_full "%DATA_DIR%\labels.csv" --task "%TASK_JSON%" --out_dir "%ROOT%data\HOSS"
+    echo [12] converting competition data into the HOSS layout (reusing local_val_task.json) ...
+    "%PY%" scripts\sdfnet_prepare_data.py --labels_train "%DATA_DIR%\labels_train.csv" --labels_full "%DATA_DIR%\labels.csv" --task "%TASK_JSON%" --out_dir "%HOSS_DIR%"
     if errorlevel 1 (
-        echo [12] 数据转换失败，请查看上方错误。
+        echo [12] data conversion failed, see the errors above.
         pause
         exit /b 1
     )
 )
 
 echo.
-echo [12] SDF-Net 环境准备完成。下一步：
-echo     1) 零训练初判（官方权重直接推理评测）:  运行 12_sdfnet_zero_shot.bat
-echo     2) 短 epoch 微调（默认 60 epoch）:      运行 12_sdfnet_finetune.bat
-echo     3) 跨模型融合（SDF-Net + TransOSS）:    运行 12_sdfnet_fusion.bat
+echo [12] SDF-Net setup done.
+echo      HOSS data:  %HOSS_DIR%
+echo      weights:    %WEIGHT%
+echo      256x256:    %WEIGHT_256%
+echo      next step:  run 14_submit_1_env_check.bat
 pause

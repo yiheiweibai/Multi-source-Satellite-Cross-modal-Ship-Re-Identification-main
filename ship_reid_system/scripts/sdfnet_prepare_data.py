@@ -20,7 +20,7 @@
         --labels_train ../赛题6-初赛/训练数据/labels_train.csv \
         --labels_full ../赛题6-初赛/训练数据/labels.csv \
         --task ../赛题6-初赛/训练数据/local_val_task.json \
-        --out_dir ../ship_reid_system/SDF-Net/data/HOSS
+        --out_dir ../SDF-Net/data/HOSS
 
 说明：本地验证集优先复用现有 local_val_task.json（不重新划分），
 query/gallery 完全按该文件内容搬运；训练集 = labels_train.csv 剔除验证集图像。
