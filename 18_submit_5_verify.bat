@@ -43,7 +43,7 @@ if errorlevel 1 (
 
 echo.
 echo [18] local-validation reference ^(1450 queries^):
-echo        active preset: %RRF_PRESET%  ^(k=%RRF_K%^)  -> Final %LOCAL_VAL_FINAL%
+echo        active preset: %RRF_PRESET%  ^(k=%RRF_K%^)  -^> Final %LOCAL_VAL_FINAL%
 echo        fold0 %LOCAL_VAL_FOLD0% / fold1 %LOCAL_VAL_FOLD1%     (single-model baseline: E0 ep80 0.5888)
 echo.
 echo ================================================================

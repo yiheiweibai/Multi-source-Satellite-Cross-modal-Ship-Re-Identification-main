@@ -1,0 +1,81 @@
+# ============================================================
+# 波次5 全量数据重训 - ConvNeXt-Small 双分支（exp_005 已验证数据量增益）
+# 复制自 config/train_convnext_s.yaml，仅改数据 CSV 与输出名；
+# 骨干、损失、PK 采样、lr、epochs、seed 与现役配置完全一致。
+# 用法：python train.py --config config/train_convnext_s_full.yaml
+# ============================================================
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda
+project_name: ship_reid_convnext_s_full
+
+# ---------- 数据（全量 labels.csv = 3534 身份/7422 图） ----------
+data_root: ../../question6-data/traindata
+train_labels_csv: ../../question6-data/traindata/labels.csv
+val_labels_csv: ""
+test_task_json: ../../question6-data/preliminary-round-test-data/task.json
+local_val_task_json: ../../question6-data/traindata/local_val_task.json
+local_val_gt_json: ../../question6-data/traindata/local_val_gt.json
+auto_num_classes: true
+
+# ---------- 数据加载 ----------
+image_size: 224
+num_workers: 12
+# 模态独立归一化（由 02_prepare_data.bat -> compute_stats.py 实测）
+optical_mean: [0.1709, 0.2070, 0.2151]
+optical_std: [0.1967, 0.1956, 0.1908]
+sar_mean: [0.0242, 0.0242, 0.0242]
+sar_std: [0.1214, 0.1214, 0.1214]
+sar_speckle_aug: true
+
+# ---------- PK 采样（与现役一致：p=64,k=2 -> batch=128） ----------
+pk_p: 64
+pk_k: 2
+pk_prefer_dual_modal: true
+pk_sampler: cross_modal
+
+# ---------- 模型（ConvNeXt-Small 双分支） ----------
+backbone: convnext_small.in12k_ft_in1k
+pretrained: true
+pretrained_path: ""
+split_idx: 2              # 前 2 个 stage 为模态特定，其余共享
+embedding_dim: 0
+modality_projection: false
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+w_arcface: 0.3
+arcface_scale: 30.0
+arcface_margin: 0.5
+supcon_temperature: 0.07
+triplet_margin: 0.3
+label_smooth: 0.1
+w_cm_infonce: 0.3
+w_cm_triplet: 0.3
+cm_temperature: 0.07
+cm_margin: 0.3
+
+# ---------- 训练 ----------
+epochs: 100
+lr: 0.00054
+backbone_lr_scale: 0.1
+weight_decay: 0.0005
+scheduler: cosine
+warmup_epochs: 3
+ema_decay: 0.999
+amp: true
+resume: ""
+
+# ---------- 输出 ----------
+output_dir: outputs/full_convnext_s
+log_interval: 20
+eval_interval: 1
+tb_enabled: false
+save_every: 20            # 每 20 个 epoch 另存 epoch_XXX.pth（含优化器状态，约 2.1GB/份）
+
+# ---------- 推理 ----------
+topk: 10
+test_batch_size: 64

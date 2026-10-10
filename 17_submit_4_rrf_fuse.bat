@@ -35,7 +35,8 @@ echo        out    = %OUT_PRED%
 echo.
 echo      Override at run time, e.g.:
 echo        17_submit_4_rrf_fuse.bat --preset anchor_plus_sv
-echo        17_submit_4_rrf_fuse.bat --weights 2 1 1 1
+echo        17_submit_4_rrf_fuse.bat --weights 1 1 1 1 1 0.5 0.75 1
+echo        ^(weight count must match the active preset: final=8 members^)
 echo.
 
 REM members/weights stay inside Python (cmd would re-parse embedded quotes)

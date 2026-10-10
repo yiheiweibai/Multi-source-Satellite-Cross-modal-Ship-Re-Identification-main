@@ -14,7 +14,7 @@ REM      The existing local_val_task.json is reused (no re-split) so results sta
 REM Notes:
 REM   - Data directory can be overridden with the SDF_DATA_DIR environment variable.
 REM   - SDF-Net.yml default IMS_PER_BATCH=32 fits a 16GB GPU. If you get OOM,
-REM     lower IMS_PER_BATCH in the yaml (19_mos_retrain.bat trains with the same yaml).
+REM     lower IMS_PER_BATCH in the yaml (SDF-Net-mos.yml / SDF-Net-full.yml share it).
 cd /d "%~dp0"
 
 set ROOT=%~dp0
@@ -87,7 +87,7 @@ REM ---- 5. download the official weights (skip if present) ----
 if exist "%WEIGHT%" (
     echo [12] official weights already present: %WEIGHT%
 ) else (
-    echo [12] downloading official weights SDF-Net.pth (about 333MB) ...
+    echo [12] downloading official weights SDF-Net.pth ^(about 333MB^) ...
     "%PY%" scripts\sdfnet_download_weights.py --out "%WEIGHT%"
     if errorlevel 1 (
         echo [12] weight download failed. Place the file manually at:
@@ -125,7 +125,7 @@ if exist "%HOSS_DIR%\bounding_box_train" (
         pause
         exit /b 1
     )
-    echo [12] converting competition data into the HOSS layout (reusing local_val_task.json) ...
+    echo [12] converting competition data into the HOSS layout ^(reusing local_val_task.json^) ...
     "%PY%" scripts\sdfnet_prepare_data.py --labels_train "%DATA_DIR%\labels_train.csv" --labels_full "%DATA_DIR%\labels.csv" --task "%TASK_JSON%" --out_dir "%HOSS_DIR%"
     if errorlevel 1 (
         echo [12] data conversion failed, see the errors above.

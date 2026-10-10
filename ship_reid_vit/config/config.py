@@ -59,6 +59,7 @@ class Config:
     pretrained_path: str = "weights/vit_base_patch16_224.pth"
     share_layer: str = "layer3"      # ResNet 从该层起共享（layer3 / layer4）
     vit_split_layer: int = 6         # ViT 前 N 个 block 为模态特定
+    split_idx: int = 2               # ConvNeXt/Swin 前 N 个 stage/layer 为模态特定
     num_classes: int = 40            # 身份分类头输出（auto_num_classes 时由数据集推断）
     embedding_dim: int = 0           # 检索特征维度（0 = 骨干输出维度，不额外投影）
     modality_projection: bool = False  # True 时使用模态感知投影头（O/S 独立投影）
@@ -80,6 +81,9 @@ class Config:
     w_cm_triplet: float = 0.0        # 跨模态 hard triplet 权重（>0 启用）
     cm_temperature: float = 0.07     # 跨模态 InfoNCE 温度
     cm_margin: float = 0.3           # 跨模态 hard triplet margin
+    # 跨模态损失的方向权重（非对称强调；默认 1.0/1.0 = 旧的双向等权行为）
+    cm_dir_w_os: float = 1.0         # anchor=光学 → SAR 方向权重
+    cm_dir_w_so: float = 1.0         # anchor=SAR → 光学方向权重（竞赛 S2O 方向）
 
     # ---------- 训练 ----------
     epochs: int = 10

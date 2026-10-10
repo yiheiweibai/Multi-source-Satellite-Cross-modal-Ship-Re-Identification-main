@@ -76,13 +76,18 @@ def cross_modal_hard_triplet(
     labels: torch.Tensor,
     modalities: torch.Tensor,
     margin: float = 0.3,
+    w_os: float = 1.0,
+    w_so: float = 1.0,
 ) -> torch.Tensor:
     """双向跨模态 hard mining 三元组损失（可复用函数）。
 
     O→S 方向：anchor=光学样本，positive=同身份 SAR 中距离最近者，
               negative=不同身份 SAR 中距离最近者；
     S→O 方向对称构造。某身份缺另一模态样本时该 anchor 跳过。
-    两个方向各自求均值后按有效方向数平均。
+    两个方向各自求均值后按「有效方向权重」加权平均。
+
+    w_os / w_so：方向权重，用于按竞赛方向非对称强调（S2O = SAR query → 光学 gallery，
+    对应 anchor=SAR 的 S→O 方向）。默认 1.0/1.0 与旧行为逐位一致。
     """
     device = features.device
     o_mask = modalities == 0
@@ -116,7 +121,7 @@ def cross_modal_hard_triplet(
     else:
         loss_so = features.new_tensor(0.0)
 
-    n_dir = (valid_os.sum() > 0).float() + (valid_so.sum() > 0).float()
+    n_dir = (valid_os.sum() > 0).float() * w_os + (valid_so.sum() > 0).float() * w_so
     if n_dir == 0:
         return features.new_tensor(0.0)
-    return (loss_os + loss_so) / n_dir
+    return (w_os * loss_os + w_so * loss_so) / n_dir

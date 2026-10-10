@@ -1,0 +1,89 @@
+# ============================================================
+# 强跨模态配方 x Swin-Small 双分支（异构骨干 + 配方增益）
+# 由 config/train_swin_s.yaml 复制，仅改动跨模态损失【绝对权重】为 1.0（方向保持对称）：
+#   w_cm_infonce 0.3 -> 1.0     w_cm_triplet 0.3 -> 1.0
+#   cm_dir_w_os 1.0 / cm_dir_w_so 1.0（显式对称：v2 实验证明增益来自绝对权重，
+#   而非方向加权——O2S 涨得比 S2O 更多，与"强调 S2O"的意图相反）
+# 动机：同骨干的 convnext_s 强配方版（v2）单模两折稳健 +0.033~+0.050，但因与冠军内
+# 旧版 convnext_s 误差相关而无法在融合中兑现；故选冠军中【不存在】的骨干 swin_s 来承接配方增益。
+# 其余（骨干/lr/PK 采样/优化器/归一化/数据路径）与 train_swin_s.yaml 完全一致，保证纯净 A/B。
+# 用法：python train.py --config config/train_swin_s_v2.yaml
+# ============================================================
+
+# ---------- 基础 ----------
+seed: 42
+device: cuda
+project_name: ship_reid_swin_s_v2_screen
+
+# ---------- 数据（真实路径） ----------
+data_root: ../../question6-data/traindata
+train_labels_csv: ../../question6-data/traindata/labels_train.csv
+val_labels_csv: ""
+test_task_json: ../../question6-data/preliminary-round-test-data/task.json
+local_val_task_json: ../../question6-data/traindata/local_val_task.json
+local_val_gt_json: ../../question6-data/traindata/local_val_gt.json
+auto_num_classes: true
+
+# ---------- 数据加载 ----------
+image_size: 224
+num_workers: 12
+# 模态独立归一化（由 02_prepare_data.bat -> compute_stats.py 实测）
+optical_mean: [0.1709, 0.2070, 0.2151]
+optical_std: [0.1967, 0.1956, 0.1908]
+sar_mean: [0.0242, 0.0242, 0.0242]
+sar_std: [0.1214, 0.1214, 0.1214]
+sar_speckle_aug: true
+
+# ---------- PK 采样（实测：bs=96 为 11.6GB/411 img/s，故取 p=48） ----------
+pk_p: 48
+pk_k: 2
+pk_prefer_dual_modal: true
+pk_sampler: cross_modal
+
+# ---------- 模型（Swin-Small 双分支） ----------
+backbone: swin_small_patch4_window7_224.ms_in22k_ft_in1k
+pretrained: true
+pretrained_path: ""
+split_idx: 2              # 前 2 个 layer 为模态特定，其余共享
+embedding_dim: 0
+modality_projection: false
+
+# ---------- 损失 ----------
+w_supcon: 0.5
+w_triplet: 0.3
+w_ce: 1.0
+w_arcface: 0.3
+arcface_scale: 30.0
+arcface_margin: 0.5
+supcon_temperature: 0.07
+triplet_margin: 0.3
+label_smooth: 0.1
+# --- v2 配方：强化跨模态绝对权重（方向对称） ---
+w_cm_infonce: 1.0
+w_cm_triplet: 1.0
+cm_temperature: 0.07
+cm_margin: 0.3
+cm_dir_w_os: 1.0
+cm_dir_w_so: 1.0
+
+# ---------- 训练 ----------
+epochs: 100
+lr: 0.00046
+backbone_lr_scale: 0.1
+weight_decay: 0.0005
+scheduler: cosine
+warmup_epochs: 3
+ema_decay: 0.999
+amp: true
+resume: ""
+
+# ---------- 输出 ----------
+output_dir: outputs/screen_swin_s_v2
+log_interval: 20
+eval_interval: 1
+tb_enabled: false
+save_every: 20            # 每 20 个 epoch 另存 epoch_XXX.pth（含优化器状态）
+
+# ---------- 推理 ----------
+topk: 10
+test_batch_size: 64
