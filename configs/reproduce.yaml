@@ -3,7 +3,7 @@
 # 由 scripts/repro_cfg.py 读取，供 14~18 号 .bat 使用：
 #   14_submit_1_env_check.bat      环境自检
 #   15_submit_2_sdfnet_infer.bat   SDF-Net 成员的测试集推理
-#   16_submit_3_shipvit_infer.bat  ship_reid_vit 测试集推理（TTA + rerank）
+#   16_submit_3_shipvit_infer.bat  ship_reid_vit 测试集推理（纯特征推理）
 #   17_submit_4_rrf_fuse.bat       RRF 倒数排名融合 -> prediction.json
 #   18_submit_5_verify.bat         提交格式终检
 #
@@ -143,27 +143,27 @@ ensemble:
     - name: sdfnet_ep25          # 次稳定伙伴
       ckpt: transformer_25.pth
       pred: sims/test/top100_ep25.json
-    - name: ship_reid_vit        # 异构分支，提供跨架构多样性（TTA + rerank 后处理）
+    - name: ship_reid_vit        # 异构分支，提供跨架构多样性（纯特征推理）
       ckpt: ""
       pred: sims/test/top100_shipvit.json
       vit_config: config/train_vit.yaml                    # 相对 shipvit_dir；由 16 号自动推理
       vit_ckpt: outputs/checkpoints/best.pth               # 相对 shipvit_dir
-    - name: ship_reid_convnext_t # 波次2 新骨干：ConvNeXt-Tiny 双分支 ep80（TTA + rerank）
+    - name: ship_reid_convnext_t # 波次2 新骨干：ConvNeXt-Tiny 双分支 ep80（纯特征推理）
       ckpt: ""
       pred: sims/test/top100_convnext_t_ep080.json
       vit_config: config/train_convnext_t.yaml             # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
       vit_ckpt: outputs/screen_convnext_t/checkpoints/epoch_080.pth
-    - name: ship_reid_convnext_s # 波次3 新骨干：ConvNeXt-Small 双分支 ep60（TTA + rerank）
+    - name: ship_reid_convnext_s # 波次3 新骨干：ConvNeXt-Small 双分支 ep60（纯特征推理）
       ckpt: ""
       pred: sims/test/top100_convnext_s_ep060.json
       vit_config: config/train_convnext_s.yaml             # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
       vit_ckpt: outputs/screen_convnext_s/checkpoints/epoch_060.pth
-    - name: ship_reid_convnext_s_pure # 波次4：强配方（w_cm=1.0 对称）ConvNeXt-Small ep40（TTA + rerank）
+    - name: ship_reid_convnext_s_pure # 波次4：强配方（w_cm=1.0 对称）ConvNeXt-Small ep40（纯特征推理）
       ckpt: ""
       pred: sims/test/top100_convnext_s_pure_ep040.json
       vit_config: config/train_convnext_s_pure.yaml        # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内
       vit_ckpt: outputs/screen_convnext_s_pure/checkpoints/epoch_040.pth
-    - name: ship_reid_swin_s_v2    # 波次4：强配方（w_cm=1.0 对称）Swin-Small ep60，异构骨干（TTA + rerank）
+    - name: ship_reid_swin_s_v2    # 波次4：强配方（w_cm=1.0 对称）Swin-Small ep60，异构骨干（纯特征推理）
       ckpt: ""
       pred: sims/test/top100_swin_s_v2_ep060.json
       vit_config: config/train_swin_s_v2.yaml              # 必须逐成员指定：split_idx 不在 ckpt 回填白名单内

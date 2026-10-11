@@ -27,7 +27,7 @@ score(c) = Σ_m  w_m / (k + rank_m(c))        # rank 从 1 开始；未出现在
 
 最终按 score 降序取 top-10。特点：
 
-- **只使用排名，不使用相似度量纲** → 可安全混合「纯特征 top-10」与「TTA+rerank 后的 top-10」等不同后处理协议
+- **只使用排名，不使用相似度量纲** → 可安全混合不同成员/协议的排名（当前冠军链路统一纯特征 top-100 排名）
 - 不同模型的特征空间无需对齐，也无需归一化
 - 需要调的超参只有四个：成员集、各成员权重、`k`、`member_topk`（各成员暴露的排名深度）
 
@@ -40,13 +40,13 @@ score(c) = Σ_m  w_m / (k + rank_m(c))        # rank 从 1 开始；未出现在
 | SDF-Net mos75（锚点 A） | 1.0 | `logs/SDF-Net-mos/transformer_75.pth` → `sims/test/top100_mos75.json` | 纯特征 top-100 排名 |
 | SDF-Net ep45 | 1.0 | `logs/SDF-Net-finetune/transformer_45.pth` → `sims/test/top100_ep45.json` | 纯特征 top-100 排名 |
 | SDF-Net ep25 | 1.0 | `logs/SDF-Net-finetune/transformer_25.pth` → `sims/test/top100_ep25.json` | 纯特征 top-100 排名 |
-| ship_reid_vit | 1.0 | `config/train_vit.yaml` + `outputs/checkpoints/best.pth` → `sims/test/top100_shipvit.json` | TTA + rerank top-100 排名 |
-| ship_reid_convnext_t | 1.0 | `config/train_convnext_t.yaml` + `outputs/screen_convnext_t/checkpoints/epoch_080.pth` → `sims/test/top100_convnext_t_ep080.json` | TTA + rerank top-100 排名 |
-| ship_reid_convnext_s（波次3） | 0.5 | `config/train_convnext_s.yaml` + `outputs/screen_convnext_s/checkpoints/epoch_060.pth` → `sims/test/top100_convnext_s_ep060.json` | TTA + rerank top-100 排名 |
-| ship_reid_convnext_s_pure（波次4） | 0.75 | `config/train_convnext_s_pure.yaml` + `outputs/screen_convnext_s_pure/checkpoints/epoch_040.pth` → `sims/test/top100_convnext_s_pure_ep040.json` | TTA + rerank top-100 排名 |
-| ship_reid_swin_s_v2（波次4） | 1.0 | `config/train_swin_s_v2.yaml` + `outputs/screen_swin_s_v2/checkpoints/epoch_060.pth` → `sims/test/top100_swin_s_v2_ep060.json` | TTA + rerank top-100 排名 |
+| ship_reid_vit | 1.0 | `config/train_vit.yaml` + `outputs/checkpoints/best.pth` → `sims/test/top100_shipvit.json` | 纯特征 top-100 排名 |
+| ship_reid_convnext_t | 1.0 | `config/train_convnext_t.yaml` + `outputs/screen_convnext_t/checkpoints/epoch_080.pth` → `sims/test/top100_convnext_t_ep080.json` | 纯特征 top-100 排名 |
+| ship_reid_convnext_s（波次3） | 0.5 | `config/train_convnext_s.yaml` + `outputs/screen_convnext_s/checkpoints/epoch_060.pth` → `sims/test/top100_convnext_s_ep060.json` | 纯特征 top-100 排名 |
+| ship_reid_convnext_s_pure（波次4） | 0.75 | `config/train_convnext_s_pure.yaml` + `outputs/screen_convnext_s_pure/checkpoints/epoch_040.pth` → `sims/test/top100_convnext_s_pure_ep040.json` | 纯特征 top-100 排名 |
+| ship_reid_swin_s_v2（波次4） | 1.0 | `config/train_swin_s_v2.yaml` + `outputs/screen_swin_s_v2/checkpoints/epoch_060.pth` → `sims/test/top100_swin_s_v2_ep060.json` | 纯特征 top-100 排名 |
 
-**权重 `1 / 1 / 1 / 1 / 1 / 0.5 / 0.75 / 1`，`k = 3`、`member_topk = 100`（各成员暴露给融合的排名深度）、输出 `topk = 10`。** 推理超参：`--batch_size 16`，config `configs/SDF-Net.yml`（256×256），SDF-Net 侧不加 `--tta/--rerank/--qe`；ship_reid 侧加 `--tta --rerank`。
+**权重 `1 / 1 / 1 / 1 / 1 / 0.5 / 0.75 / 1`，`k = 3`、`member_topk = 100`（各成员暴露给融合的排名深度）、输出 `topk = 10`。** 推理超参：`--batch_size 16`，config `configs/SDF-Net.yml`（256×256），SDF-Net 侧与 ship_reid 侧均不加 `--tta/--rerank/--qe`（推理端增强已取消，统一纯特征 top-100 排名）。
 
 > **当前 `ensemble.active` = `final_full`**：成员构型 / 权重 / k / member_topk 与上表**完全一致**，唯一差别是 8 个成员全部改用官方全量 `labels.csv`（3534 身份 / 7422 图）重训版本（成员名带 `_full`，权重路径为 `logs/SDF-Net-{full,mos-full}/transformer_*.pth` 与 `ship_reid_vit/outputs/full_*/checkpoints/epoch_*.pth`，预测落在 `sims/test_full/`）。全量成员已见全部身份，**无无泄漏本地验证**，增益靠 exp_005 外推 +0.02~+0.04。上表的 0.6905 属回滚点 `ensemble.active: final`（缩水数据版）。
 
@@ -139,7 +139,7 @@ $TEST = "H:\Ship-Re-Identification\question6-data\preliminary-round-test-data\ta
     --out submission_rrf.json
 ```
 
-成员预测由 15 号（SDF-Net 侧，`sdfnet_inference.py --topk 100`）与 16 号（ship_reid 侧，`inference.py --tta --rerank --topk 100`）产出，输出都落在 `sims\test\top100_*.json`。
+成员预测由 15 号（SDF-Net 侧，`sdfnet_inference.py --topk 100`）与 16 号（ship_reid 侧，`inference.py --topk 100`，纯特征推理、无 TTA/rerank）产出，输出都落在 `sims\test\top100_*.json`。
 
 `rrf_fuse.py` 内置校验：query 集合与 task 一致、top-10 长度、候选去重、候选全部属于 gallery。
 

@@ -8,7 +8,7 @@ set "ENV_BAT=%TEMP%\shipreid_repro_env.bat"
 set "VIT_STEPS_TXT=%TEMP%\shipreid_repro_env_vitsteps.txt"
 
 echo ================================================================
-echo  [16] Step 3/5  ship_reid test-set inference (TTA + rerank)
+echo  [16] Step 3/5  ship_reid test-set inference (pure feature, no post-enhance)
 echo ================================================================
 echo.
 
@@ -101,7 +101,7 @@ echo.
 echo [16] === %M_NAME% ===
 echo [16] config: %M_CFG%
 echo [16] ckpt  : %M_CKPT%
-"%VIT_PY%" inference.py --config "%M_CFG%" --ckpt "%M_CKPT%" --use_test_task --out_prediction "%M_PRED%" --topk %RRF_MEMBER_TOPK% --tta --rerank
+"%VIT_PY%" inference.py --config "%M_CFG%" --ckpt "%M_CKPT%" --use_test_task --out_prediction "%M_PRED%" --topk %RRF_MEMBER_TOPK%
 if errorlevel 1 (
     echo [ERROR] ship_reid inference failed: %M_NAME%
     pause
