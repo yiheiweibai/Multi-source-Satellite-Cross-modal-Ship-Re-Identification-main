@@ -132,6 +132,7 @@ def make_dataloader(cfg, is_train=True):
                         cfg.DATALOADER.NUM_INSTANCE,
                     ),
                     num_workers=num_workers,
+                    pin_memory=True,
                     collate_fn=train_collate_fn,
                     worker_init_fn=seed_worker,
                     generator=torch.Generator().manual_seed(cfg.SOLVER.SEED),

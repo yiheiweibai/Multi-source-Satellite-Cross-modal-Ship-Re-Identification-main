@@ -29,9 +29,16 @@ def read_image(img_path):
 
 def sar32bit2RGB(img):
     nimg = np.array(img, dtype=np.float32)
-    nimg = nimg / nimg.max() * 255
+    nimg_max = nimg.max()
+    if nimg_max > 0:
+        nimg = nimg / nimg_max * 255
     nimg_8 = nimg.astype(np.uint8)
-    cv_img = cv2.cvtColor(nimg_8, cv2.COLOR_GRAY2RGB)
+    if nimg_8.ndim == 2:
+        cv_img = cv2.cvtColor(nimg_8, cv2.COLOR_GRAY2RGB)
+    elif nimg_8.ndim == 3 and nimg_8.shape[2] == 4:
+        cv_img = cv2.cvtColor(nimg_8, cv2.COLOR_BGRA2RGB)
+    else:
+        cv_img = nimg_8  # 已是三通道（SAR 灰度按三通道复制存储，含 CycleGAN fake SAR）
     pil_img = Image.fromarray(cv_img)
     return pil_img
 

@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--qe", action="store_true", help="查询扩展")
     p.add_argument("--batch_size", type=int, default=8, help="特征提取 batch size（16GB 显存建议 8~32）")
     p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--topk", type=int, default=10, help="prediction 每个 query 的候选数（提交=10，融合可设 100）")
     p.add_argument("--device", type=str, default="cuda")
     return p.parse_args()
 
@@ -247,9 +248,9 @@ def main() -> None:
         cand = [i for i, g in enumerate(gallery) if g["modality"] == target_mod]
         q_abs_self = str(Path(q["image_path_abs"]).resolve())
         cand = [i for i in cand if g_abs[i] != q_abs_self]
-        if len(cand) < 10:
-            raise RuntimeError(f"query {q['query_id']} 候选仅 {len(cand)} 个，不足 10")
-        top = sim[qi, torch.tensor(cand)].topk(10).indices.tolist()
+        if len(cand) < args.topk:
+            raise RuntimeError(f"query {q['query_id']} 候选仅 {len(cand)} 个，不足 {args.topk}")
+        top = sim[qi, torch.tensor(cand)].topk(args.topk).indices.tolist()
         prediction[q["query_id"]] = [gallery[cand[t]]["image_id"] for t in top]
 
     with open(args.out_prediction, "w", encoding="utf-8") as f:

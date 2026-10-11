@@ -11,7 +11,14 @@
         --direction AtoB \
         --checkpoint checkpoints/ship_os/netG_A.pth
 
-用法（增强 SDF-Net 训练集）：
+用法（增强 SDF-Net 训练集，AutoDL 任意工作目录下均可执行）：
+    # 推荐：--dataroot 兼作路径基准，其余相对路径均相对于它解析；也可用绝对路径
+    python generate.py --mode augment \
+        --dataroot /root/autodl-tmp/cyclegan_data \
+        --train_csv 赛题6-初赛/训练数据/labels_train.csv \
+        --checkpoint_dir checkpoints/ship_os \
+        --out_dir ../SDF-Net/data/HOSS_augmented
+    # 本地旧用法兼容（不传 --dataroot，相对路径按当前工作目录解析）
     python generate.py --mode augment \
         --train_csv ../赛题6-初赛/训练数据/labels_train.csv \
         --checkpoint_dir checkpoints/ship_os \
@@ -51,11 +58,36 @@ def parse_args():
     p.add_argument("--train_csv", type=str, help="labels_train.csv")
     p.add_argument("--checkpoint_dir", type=str, help="checkpoints/ship_os 目录")
     p.add_argument("--out_dir", type=str, help="增强数据输出目录")
+    # 路径基准（保证 AutoDL 任意工作目录下相对路径不失效）
+    p.add_argument("--dataroot", type=str, default=None,
+                   help="数据根目录：1) augment 模式作为 optical/sar 图像目录的根；2) 未指定 --base_dir 时兼作所有相对路径的解析基准")
+    p.add_argument("--base_dir", type=str, default=None,
+                   help="相对路径解析基准目录（--train_csv/--out_dir/--checkpoint_dir/--input_dir/--output_dir/--checkpoint 的相对写法均相对于它解析）。默认取 --dataroot；两者均未提供时取当前工作目录（保持本地旧用法兼容）")
     # 通用
     p.add_argument("--checkpoint", type=str, help="单个生成器权重路径（dir 模式用）")
     p.add_argument("--crop_size", type=int, default=256)
     p.add_argument("--gpu_ids", type=str, default="0")
     return p.parse_args()
+
+
+def get_base_dir(args) -> Path:
+    """返回相对路径解析基准：--base_dir > --dataroot > 当前工作目录。"""
+    if args.base_dir:
+        return Path(args.base_dir).resolve()
+    if args.dataroot:
+        return Path(args.dataroot).resolve()
+    return Path.cwd()
+
+
+def resolve_path(path_str: str, base_dir: Path) -> Path:
+    """将用户输入路径规范化为绝对路径：
+    - 已是绝对路径（含盘符或以 / 开头）→ 原样使用；
+    - 相对路径 → 相对 base_dir 解析（不再依赖进程当前工作目录）。
+    """
+    p = Path(path_str)
+    if p.is_absolute():
+        return p.resolve()
+    return (base_dir / p).resolve()
 
 
 def build_generator(checkpoint_path: str, device):
@@ -86,10 +118,11 @@ def translate_image(g, src_path: Path, dst_path: Path, device):
 
 
 def run_dir_mode(args, device):
-    input_dir = Path(args.input_dir)
-    output_dir = Path(args.output_dir)
+    base = get_base_dir(args)
+    input_dir = resolve_path(args.input_dir, base)
+    output_dir = resolve_path(args.output_dir, base)
     output_dir.mkdir(parents=True, exist_ok=True)
-    g = build_generator(args.checkpoint, device)
+    g = build_generator(str(resolve_path(args.checkpoint, base)), device)
     files = [p for p in input_dir.iterdir() if p.suffix.lower() in IMG_EXTS]
     print(f"翻译 {len(files)} 张图: {input_dir} -> {output_dir}")
     for i, f in enumerate(files, 1):
@@ -100,18 +133,28 @@ def run_dir_mode(args, device):
 
 
 def run_augment_mode(args, device):
-    csv_path = Path(args.train_csv)
-    data_root = csv_path.parent
-    out = Path(args.out_dir)
+    base = get_base_dir(args)
+    csv_path = resolve_path(args.train_csv, base)
+    # 图像数据根目录推导（含 optical/ sar/ 子目录）：
+    #   1) 显式 --dataroot → 直接使用；
+    #   2) 未提供时回退 csv 所在目录（保持本地旧用法：csv 与 optical/sar 同级的目录）
+    data_root = Path(args.dataroot).resolve() if args.dataroot else csv_path.parent
+    if not (data_root / "optical").is_dir() and not (data_root / "sar").is_dir() \
+            and csv_path.parent != data_root:
+        fallback = csv_path.parent
+        print(f"[generate] 警告: --dataroot={data_root} 下未找到 optical/sar 目录，"
+              f"自动回退使用 csv 所在目录 {fallback} 作为数据根")
+        data_root = fallback
+    out = resolve_path(args.out_dir, base)
     o2s_dir = out / "optical_to_sar"
     s2o_dir = out / "sar_to_optical"
     o2s_dir.mkdir(parents=True, exist_ok=True)
     s2o_dir.mkdir(parents=True, exist_ok=True)
 
-    ckpt_dir = Path(args.checkpoint_dir)
-    # G_A: B->A (sar->optical), G_B: A->B (optical->sar)
-    g_a = build_generator(str(ckpt_dir / "netG_A.pth"), device)
-    g_b = build_generator(str(ckpt_dir / "netG_B.pth"), device)
+    ckpt_dir = resolve_path(args.checkpoint_dir, base)
+    # train.py 约定：G_A: A->B (optical->sar)，G_B: B->A (sar->optical)
+    g_o2s = build_generator(str(ckpt_dir / "netG_A.pth"), device)  # optical -> sar
+    g_s2o = build_generator(str(ckpt_dir / "netG_B.pth"), device)  # sar -> optical
 
     with open(csv_path, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -124,12 +167,12 @@ def run_augment_mode(args, device):
         if not src.exists():
             continue
         if mod == "optical":
-            # optical -> fake sar (G_B = A->B)
-            translate_image(g_b, src, o2s_dir / f"{iid}.tif", device)
+            # optical -> fake sar (G_A = A->B)
+            translate_image(g_o2s, src, o2s_dir / f"{iid}.tif", device)
             n_o2s += 1
         elif mod == "sar":
-            # sar -> fake optical (G_A = B->A)
-            translate_image(g_a, src, s2o_dir / f"{iid}.tif", device)
+            # sar -> fake optical (G_B = B->A)
+            translate_image(g_s2o, src, s2o_dir / f"{iid}.tif", device)
             n_s2o += 1
 
     print(f"增强数据生成完成: {out}")

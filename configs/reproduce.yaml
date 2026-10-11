@@ -25,8 +25,8 @@
 # ---------------------------------------------------------------------------
 
 paths:
-  # 官方赛题文件
-  test_task: ../question6-data/preliminary-round-test-data/task.json
+  # 官方赛题文件（本地实际位于工程内 赛题6-初赛/ 目录）
+  test_task: 赛题6-初赛/初赛测试数据/task.json
   # SDF-Net 主骨干
   sdfnet_dir: SDF-Net
   sdfnet_config: configs/SDF-Net.yml                 # 相对 sdfnet_dir；推理必须在 SDF-Net 目录下运行
@@ -49,7 +49,8 @@ ensemble:
   member_topk: 100   # 各成员输入融合的排名深度（写入成员 pred 文件的候选数）
 
   # 生效的预设（改这一行即可切换集成方案）
-  active: final_full
+  # 波次6（2026-10-11）：并入队友 base75（单模本地验证综合 0.5985，互补成员）
+  active: final_full_b75
 
   # 权重预设：预设名 -> {成员名: 权重}
   # 顺序即融合时成员与权重的绑定顺序，由 Python 侧读取，不经命令行
@@ -94,6 +95,22 @@ ensemble:
       ship_reid_convnext_s_full: 0.5
       ship_reid_convnext_s_pure_full: 0.75
       ship_reid_swin_s_v2_full: 1.0
+
+    # 波次6（2026-10-11，当前 active）：final_full 8 成员 + 队友 base75 互补成员（9 成员）
+    #   base75：ship_reid_system/outputs/ab75 训练配方（base75_best.pth），本地验证综合 0.5985，
+    #   与冠军路线同域互补（SDF-Net 系异构训练配方），top-100 排名文件已生成（267×100 无重复）。
+    #   权重初值 1.0（同域锚点级别）；k=3 / member_topk=100 沿用，无法本地调参（盲提交）。
+    #   final_full（8 成员版）保留作回滚。
+    final_full_b75:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 1.0
+      ship_reid_convnext_s_full: 0.5
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
 
     # 回退选项：仅锚点 + 异构分支
     # 注意：成员池里的 ship_reid_vit 已切到 top-100 文件，而 sdfnet_ep80 仍是 top-10，
@@ -190,12 +207,18 @@ ensemble:
       vit_config: config/train_swin_s_v2_full.yaml
       vit_ckpt: outputs/full_swin_s_v2/checkpoints/epoch_060.pth
 
+    # 波次6：队友 base75 互补成员（ab75 配方，本地验证综合 0.5985）
+    #   pred 为 test 集 top-100 排名（267×100 无重复）；sim 备份 sims/test_base75_sim.pt
+    - name: sdfnet_base75
+      ckpt: D:/Projects/Multi-source Satellite Cross-modal Ship Re-Identification/ship_reid_system/outputs/ab75/base75_best.pth
+      pred: sims/test/top100_base75.json
+
 # 仅用于 18 号脚本回显本地验证基准，不参与流程
 # 折切分口径：scripts/b1_topk_probe.py::fold_split（各方向内部 folds[i % 2]，725/725）
 # 注：此处数值与旧版记录（0.6346 / 0.6131 / 0.6561）不可直接比较——旧版折切分已无法复现
 local_val:
-  task: ../question6-data/traindata/local_val_task.json
-  gt: ../question6-data/traindata/local_val_gt.json
+  task: 赛题6-初赛/训练数据/local_val_task.json
+  gt: 赛题6-初赛/训练数据/local_val_gt.json
   # 波次5 全量重训后**无无泄漏本地验证**（成员训练已见全部 3534 身份），故不提供数值。
   # 下面 0.6905 / 0.7046 / 0.6764 是 final（2828 身份版）最后一次已验证基准，仅作参照。
   final: "N/A (blind; exp_005 extrapolated +0.02~+0.04 vs final 0.6905)"

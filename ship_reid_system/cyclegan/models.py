@@ -131,7 +131,10 @@ class GANLoss(nn.Module):
 
 
 def build_cyclegan(ngf: int = 64, ndf: int = 64, n_blocks: int = 9):
-    """返回 G_A(B->A), G_B(A->B), D_A, D_B。"""
+    """返回 G_A(A->B), G_B(B->A), D_A(B 域判别器), D_B(A 域判别器)。
+
+    训练约定（见 train.py）：A=optical, B=sar，故 G_A=optical->sar, G_B=sar->optical。
+    """
     norm = nn.InstanceNorm2d
     g_a = ResnetGenerator(3, 3, ngf, n_blocks, norm)
     g_b = ResnetGenerator(3, 3, ngf, n_blocks, norm)
