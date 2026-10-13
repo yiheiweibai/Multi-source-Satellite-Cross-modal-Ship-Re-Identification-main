@@ -54,13 +54,29 @@ class Trainer:
         self.criterion = ComposedLoss(cfg).to(device)
         self.optimizer, self.scheduler = build_optimizer_and_scheduler(model, cfg)
 
+        # Phase 4：方向特异性投影的辅助损失（directional_projection=true 时启用）。
+        # 关键：投影头必须收到梯度，否则推理端 --directional 只是随机投影。
+        # O2S 方向损失只流经 proj_o2s、S2O 只流经 proj_s2o（方向特定空间）。
+        self.use_directional = bool(
+            getattr(cfg, "directional_projection", False)
+        ) and hasattr(model, "directional_head")
+        if self.use_directional:
+            from losses import CrossModalInfoNCE
+            temp = float(getattr(cfg, "cm_temperature", 0.07))
+            self.dir_infonce_o2s = CrossModalInfoNCE(temperature=temp, w_os=1.0, w_so=0.0)
+            self.dir_infonce_s2o = CrossModalInfoNCE(temperature=temp, w_os=0.0, w_so=1.0)
+            self.w_directional = float(getattr(cfg, "w_directional", 0.3))
+
         # EMA
         self.use_ema = getattr(cfg, "use_ema", True)
         self.ema = EMA(model, decay=getattr(cfg, "ema_decay", 0.999)) if self.use_ema else None
 
         # AMP
         self.use_amp = getattr(cfg, "amp", True) and device.type == "cuda"
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        if self.use_amp:
+            self.scaler = torch.amp.GradScaler('cuda')
+        else:
+            self.scaler = torch.cuda.amp.GradScaler(enabled=False)
 
         self.logger = get_logger("trainer")
         out_dir = Path(cfg.output_dir)
@@ -78,7 +94,21 @@ class Trainer:
     # ---------- 训练 ----------
     def train(self, epochs: int | None = None) -> float:
         epochs = epochs or getattr(self.cfg, "epochs", 60)
+        # Phase 2：跨模态硬负样本挖掘间隔（0=禁用）
+        hn_interval = int(getattr(self.cfg, "hard_neg_mining_interval", 0))
+        hn_topk = int(getattr(self.cfg, "hard_neg_topk", 5))
         for epoch in range(self.start_epoch, epochs):
+            # Phase 2：周期性执行硬负样本挖掘
+            if hn_interval > 0 and epoch > 0 and epoch % hn_interval == 0:
+                hard_ids = self._mine_cross_modal_hard_negatives(topk=hn_topk)
+                sampler = getattr(self.train_loader, "sampler", None)
+                if sampler is not None and hasattr(sampler, "set_hard_negatives"):
+                    sampler.set_hard_negatives(hard_ids)
+                    self.logger.info(
+                        f"[Phase2] Epoch {epoch + 1}: 挖掘到 {len(hard_ids)} 个硬负样本身份，"
+                        f"已注入 PK 采样器"
+                    )
+
             self.model.train()
             train_loss = 0.0
             train_n = 0
@@ -89,7 +119,7 @@ class Trainer:
                 modalities = modalities.to(self.device)
 
                 self.optimizer.zero_grad()
-                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
                     ret_feat, logits, arcface_logits = self.model(imgs, modalities, labels=labels)
                     losses = self.criterion(
                         ret_feat, logits, labels,
@@ -97,7 +127,14 @@ class Trainer:
                         arcface_logits=arcface_logits,
                     )
 
-                self.scaler.scale(losses["loss"]).backward()
+                total_loss = losses["loss"]
+                if self.use_directional:
+                    # Phase 4：方向特异性辅助损失（autocast 外 fp32 计算，数值稳定）
+                    dir_loss = self._directional_aux_loss(ret_feat, labels, modalities)
+                    total_loss = total_loss + self.w_directional * dir_loss
+                    losses["dir"] = dir_loss
+
+                self.scaler.scale(total_loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
                 self.scaler.step(self.optimizer)
@@ -106,9 +143,12 @@ class Trainer:
                 if self.ema is not None:
                     self.ema.update(self.model)
 
-                train_loss += losses["loss"].item() * imgs.size(0)
+                train_loss += total_loss.item() * imgs.size(0)
                 train_n += imgs.size(0)
-                pbar.set_postfix(loss=f"{losses['loss'].item():.4f}")
+                postfix = {"loss": f"{total_loss.item():.4f}"}
+                if self.use_directional:
+                    postfix["dir"] = f"{dir_loss.item():.3f}"
+                pbar.set_postfix(**postfix)
             avg_loss = train_loss / max(train_n, 1)
 
             # 验证（用 EMA 权重）
@@ -138,6 +178,71 @@ class Trainer:
             if self.scheduler is not None:
                 self.scheduler.step()
         return self.best_map
+
+    @torch.no_grad()
+    def _mine_cross_modal_hard_negatives(self, topk: int = 5) -> set:
+        """跨模态硬负样本挖掘：用当前模型计算训练集跨模态相似度，为每个身份找出 top-k 最难区分的跨模态负样本身份。
+
+        返回：硬负样本身份集合（并集）。
+        """
+        self.model.eval()
+        feats, labels, mods = [], [], []
+        for imgs, lab, mod in self.train_loader:
+            imgs = imgs.to(self.device)
+            mod = mod.to(self.device)
+            feat = self.model.extract_feature(imgs, mod)
+            feats.append(feat.cpu())
+            labels.append(lab)
+            mods.append(mod.cpu())
+        feats = torch.cat(feats)
+        labels = torch.cat(labels)
+        mods = torch.cat(mods)
+
+        # 按模态拆分
+        o_mask = mods == 0
+        s_mask = mods == 1
+        o_feat, o_lab = feats[o_mask], labels[o_mask]
+        s_feat, s_lab = feats[s_mask], labels[s_mask]
+        if o_feat.size(0) == 0 or s_feat.size(0) == 0:
+            return set()
+
+        # 计算跨模态相似度矩阵（光学 x SAR）
+        o_n = torch.nn.functional.normalize(o_feat, dim=1)
+        s_n = torch.nn.functional.normalize(s_feat, dim=1)
+        sim = o_n @ s_n.t()  # (No, Ns)
+
+        hard_ids = set()
+        # O2S：为每个光学身份找最难区分的 SAR 身份（同身份为正，其余为负）
+        for i in range(o_n.size(0)):
+            pos_mask = s_lab == o_lab[i]
+            neg_sim = sim[i].clone()
+            neg_sim[pos_mask] = -1.0  # 排除正样本
+            _, top_neg_idx = torch.topk(neg_sim, min(topk, s_n.size(0)))
+            hard_ids.update(s_lab[top_neg_idx].tolist())
+        # S2O：为每个 SAR 身份找最难区分的光学身份
+        for j in range(s_n.size(0)):
+            pos_mask = o_lab == s_lab[j]
+            neg_sim = sim[:, j].clone()
+            neg_sim[pos_mask] = -1.0
+            _, top_neg_idx = torch.topk(neg_sim, min(topk, o_n.size(0)))
+            hard_ids.update(o_lab[top_neg_idx].tolist())
+
+        return hard_ids
+
+    def _directional_aux_loss(
+        self, ret_feat: torch.Tensor, labels: torch.Tensor, modalities: torch.Tensor
+    ) -> torch.Tensor:
+        """Phase 4：方向特异性 InfoNCE 辅助损失。
+
+        O2S 方向（光学 anchor → SAR）：在 proj_o2s 空间内做单向跨模态 InfoNCE；
+        S2O 方向（SAR anchor → 光学）：在 proj_s2o 空间内做单向跨模态 InfoNCE。
+        两方向损失分别只回传各自的投影头，保证投影头学到方向特定的判别空间。
+        """
+        feat = ret_feat.float()
+        f_o2s, f_s2o = self.model.directional_head(feat)
+        l_o2s = self.dir_infonce_o2s(f_o2s, labels, modalities)
+        l_s2o = self.dir_infonce_s2o(f_s2o, labels, modalities)
+        return 0.5 * (l_o2s + l_s2o)
 
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> dict:

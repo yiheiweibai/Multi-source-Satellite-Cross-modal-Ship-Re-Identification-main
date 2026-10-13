@@ -86,7 +86,7 @@ class DualBranchResNet(nn.Module):
 
 class DualBranchViT(nn.Module):
     """ViT 双分支（timm）：patch_embed + 前 split_layer 个 block 为模态特定，
-    其余 block + norm 为共享深层。输入尺寸固定 224。
+    其余 block + norm 为共享深层。img_size 透传给 timm 做 pos_embed 重采样。
     """
 
     def __init__(
@@ -95,11 +95,12 @@ class DualBranchViT(nn.Module):
         pretrained: bool = True,
         pretrained_path: str = "",
         backbone_name: str = "vit_base_patch16_224",
+        img_size: int = 224,
     ) -> None:
         super().__init__()
         import timm
 
-        base = timm.create_model(backbone_name, pretrained=pretrained)
+        base = timm.create_model(backbone_name, pretrained=pretrained, img_size=img_size)
         # 本地预训练权重在拆分双分支之前加载到标准 ViT，保证键名一一对应
         if pretrained_path and Path(pretrained_path).exists():
             _load_pretrained_weights(base, pretrained_path)
@@ -184,6 +185,7 @@ def build_backbone(cfg) -> nn.Module:
             pretrained=use_pretrained,
             pretrained_path=pretrained_path if has_local else "",
             backbone_name=name,
+            img_size=getattr(cfg, "image_size", 224),
         )
     elif name.startswith("convnext") or name.startswith("swin"):
         # 延迟 import，避免影响 ViT/ResNet 现有路径

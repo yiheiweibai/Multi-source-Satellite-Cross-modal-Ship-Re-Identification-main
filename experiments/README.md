@@ -43,3 +43,4 @@
 | `exp_003_sar_preprocess_ab.csv` | 11 脚本六组合消融（base/preprocess/colormap/tta/rerankqe/mixed） | 模板，待 11 跑完填写 |
 | `exp_004_t0_gain_probe.md` | T0 零训练四探针：CLIP 弱配方骨干 / 深 member_topk / best·last / 方向独立 k（全部 REJ，含 union top-10 召回已 98.83% 的实测） | 已登记 |
 | `exp_005_nested_data_scaling.md` | 嵌套数据量探针：训练身份 2122→2828 双折实测（+0.067/+0.033 同向），外推全量重训期望 +0.03~0.04 | 已登记 |
+| `exp_010_strong_cm_convnext_t.md` | 强跨模态配方（w_cm 0.3→1.0）× ConvNeXt-T：单模同 epoch +0.016~+0.029；三重门槛口径判负（G2 k=40/fold0 O2O），但用户指定「只看总体分」口径正增益（最佳 +0.0061） | 已登记（双口径） |

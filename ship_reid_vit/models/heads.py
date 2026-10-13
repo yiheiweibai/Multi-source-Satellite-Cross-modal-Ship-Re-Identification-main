@@ -132,3 +132,52 @@ class ModalityAwareHead(nn.Module):
     ) -> torch.Tensor:
         feat = self._project(feat, modality)
         return self.shared_head.arcface_forward(feat, labels)
+
+
+class DirectionalProjectionHead(nn.Module):
+    """方向特异性非对称投影头（Phase 4）。
+
+    在共享 BNNeckHead 输出的检索特征之上，为 O2S 和 S2O 方向各增加一个轻量级
+    线性投影，学习方向特定的判别空间：
+    - O2S 方向：光学 query 检索 SAR gallery，投影后特征更关注"从光学推断 SAR 散射"的线索
+    - S2O 方向：SAR query 检索光学 gallery，投影后特征更关注"从 SAR 散射推断光学外观"的线索
+
+    训练时按 batch 内样本的 modality 路由到对应投影层计算跨模态损失；
+    推理时按 query_type 选择对应投影层提取特征。
+    """
+
+    def __init__(self, feat_dim: int, proj_dim: int = 0) -> None:
+        super().__init__()
+        if proj_dim <= 0:
+            proj_dim = feat_dim
+        # O2S：光学 query → SAR gallery 方向投影
+        self.proj_o2s = nn.Linear(feat_dim, proj_dim, bias=False)
+        # S2O：SAR query → 光学 gallery 方向投影
+        self.proj_s2o = nn.Linear(feat_dim, proj_dim, bias=False)
+        self.out_dim = proj_dim
+
+        nn.init.xavier_uniform_(self.proj_o2s.weight)
+        nn.init.xavier_uniform_(self.proj_s2o.weight)
+
+    def forward(
+        self, feat: torch.Tensor, modality: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回 (feat_o2s, feat_s2o)：两个方向的投影特征（均已 L2 归一化）。
+
+        训练时调用方按 modality 选择对应投影计算损失；推理时按 query_type 选择。
+        """
+        feat_o2s = F.normalize(self.proj_o2s(feat), dim=1)
+        feat_s2o = F.normalize(self.proj_s2o(feat), dim=1)
+        return feat_o2s, feat_s2o
+
+    def extract_directional(
+        self, feat: torch.Tensor, direction: str
+    ) -> torch.Tensor:
+        """按方向提取投影特征。direction: "O2S" 或 "S2O"。"""
+        if direction == "O2S":
+            return F.normalize(self.proj_o2s(feat), dim=1)
+        elif direction == "S2O":
+            return F.normalize(self.proj_s2o(feat), dim=1)
+        else:
+            # O2O 或其他方向：返回原始特征（未投影）
+            return F.normalize(feat, dim=1)

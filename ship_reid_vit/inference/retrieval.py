@@ -27,6 +27,7 @@ class RetrievalEngine:
                 "backbone", "share_layer", "vit_split_layer", "num_classes",
                 "image_size", "embedding_dim", "modality_projection",
                 "w_arcface", "arcface_scale", "arcface_margin",
+                "directional_projection",
             ):
                 if saved_cfg.get(key) is not None:
                     setattr(cfg, key, saved_cfg[key])
@@ -45,16 +46,45 @@ class RetrievalEngine:
         self.model.eval()
 
     @torch.no_grad()
-    def extract(self, loader: DataLoader, tta: bool = False) -> torch.Tensor:
-        """提取特征。tta=True 时对原图与水平翻转图特征取平均。"""
+    def extract(
+        self, loader: DataLoader, tta: bool = False,
+        multiscale: bool = False,
+        ms_weights: tuple = (0.5, 0.3, 0.2),
+    ) -> torch.Tensor:
+        """提取特征。
+
+        Args:
+            loader: 数据加载器
+            tta: 水平翻转 TTA（原图+翻转特征平均）
+            multiscale: 多尺度特征融合（全局+中心局部+水平条带）
+            ms_weights: 多尺度权重 (global, center, stripe)
+        """
         feats = []
         for imgs, _, modalities in loader:
             imgs = imgs.to(self.device)
             modalities = modalities.to(self.device)
-            f = self.model.extract_feature(imgs, modalities)
+
+            if multiscale:
+                f = self.model.extract_multiscale_feature(
+                    imgs, modalities,
+                    global_weight=ms_weights[0],
+                    center_weight=ms_weights[1],
+                    stripe_weight=ms_weights[2],
+                )
+            else:
+                f = self.model.extract_feature(imgs, modalities)
+
             if tta:
                 imgs_flip = torch.flip(imgs, dims=[3])  # 水平翻转
-                f_flip = self.model.extract_feature(imgs_flip, modalities)
+                if multiscale:
+                    f_flip = self.model.extract_multiscale_feature(
+                        imgs_flip, modalities,
+                        global_weight=ms_weights[0],
+                        center_weight=ms_weights[1],
+                        stripe_weight=ms_weights[2],
+                    )
+                else:
+                    f_flip = self.model.extract_feature(imgs_flip, modalities)
                 f = (f + f_flip) / 2
             feats.append(f)
         return F.normalize(torch.cat(feats), dim=1)

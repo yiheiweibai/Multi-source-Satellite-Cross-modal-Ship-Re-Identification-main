@@ -19,6 +19,8 @@
 #           指定，因为 split_idx 不在 checkpoint 的配置回填白名单内
 #   改权重：在 ensemble.presets 里对应的预设下改数字，或增删该预设里的成员条目
 #           预设里没列出的成员不参与融合；权重必须 > 0
+#   改方向权重：在预设里加可选键 per_direction: {O2S|S2O|O2O: {成员名: 权重（>= 0）}}
+#           仅覆盖该方向列出的成员，其余方向/成员沿用上面的基础权重；0 = 该方向剔除该成员
 #   切预设：改 ensemble.active 一行；或运行时用 17_submit_4_rrf_fuse.bat --preset <名>
 #   临时扫权重：17_submit_4_rrf_fuse.bat --weights 2 1 1 1
 #           （个数需与当前预设的成员数一致，按预设内顺序一一对应）
@@ -26,7 +28,7 @@
 
 paths:
   # 官方赛题文件（本地实际位于工程内 赛题6-初赛/ 目录）
-  test_task: 赛题6-初赛/初赛测试数据/task.json
+  test_task: ../question6-data/preliminary-round-test-data/task.json
   # SDF-Net 主骨干
   sdfnet_dir: SDF-Net
   sdfnet_config: configs/SDF-Net.yml                 # 相对 sdfnet_dir；推理必须在 SDF-Net 目录下运行
@@ -43,14 +45,53 @@ ensemble:
   # RRF 平滑常数 k 与「成员暴露给融合的排名深度」member_topk 存在强交互：
   # 成员只暴露 top-10 时（member_topk=10）k=10 不可能抬高召回上限；把成员放到 top-100
   # 并降低 k，才让「只在某人 top-100 内的候选」有机会进入输出 top-10。
-  # 本地验证（1450 query）：member_topk=10,k=10 -> 0.6346；member_topk=100,k=3 -> 0.6465（+0.0119）。
-  k: 3           # RRF 平滑常数，score = sum(w / (k + rank))
+  # 波次8（2026-10-12）k 重扫（12 成员，无泄漏 2828 local_val）：
+  #   k=1 0.6905 / k=3 0.6955 / k=5 0.6973 / k=7 0.7008 / k=10 0.7025（峰值）/
+  #   k=15 0.7009 / k=20 0.7022 / k=30 0.6995 / k=50 0.6964
+  #   k=10 相对 k=3 +0.0070，fold0 0.7165（+0.0079）/fold1 0.6884（+0.0060）双折同向。
+  #   对比方法（同期横评，均在同一 sims 口径）：Score-minmax 0.7004、Hybrid(pool=100) 0.7046；
+  #   两者依赖相似度分数标定，对跨集合的分数分布口径敏感；RRF 仅用排名（协议无关），故采用 k=10。
+  #   更正（波次11，2026-10-12）：原记「local_val sim 为 tta+rerank 而测试集成员为 base 纯特征，
+  #   存在协议错配」不成立——经逐位复现核实，测试侧成员文件同为 tta+rerank 产物（267/267 全等，
+  #   详见下文波次11 注释）；RRF 的协议无关理由不受影响。
+  k: 10          # RRF 平滑常数，score = sum(w / (k + rank))
   topk: 10       # 每条 query 保留的候选数（赛题要求恰好 10）
   member_topk: 100   # 各成员输入融合的排名深度（写入成员 pred 文件的候选数）
 
   # 生效的预设（改这一行即可切换集成方案）
-  # 波次6（2026-10-11）：并入队友 base75（单模本地验证综合 0.5985，互补成员）
-  active: final_full_b75
+  # 波次9（2026-10-12）：由波次8 的 12 成员剪掉最弱成员 cnx_s -> 11 成员（local_val 2828 口径 +0.0066）
+  #   波次8（12 成员，DINOv2-B 三重门槛已过）保留为回滚点 prediction_12m_k10_bak.json
+  # 波次10（2026-10-12）：11 成员 + O2S 方向覆盖（mos75=1.5 / shipvit=0.5 / cnx_t=0.25）
+  #   local_val 2828 口径 +0.0042，8k×3 折分割全通过；波次9（11 成员同权重）保留为回滚点
+  #   prediction_11m_nocnxs_k10_bak.json
+  # 波次12（2026-10-12，【官方判负，已回滚】）：曾把 dino 两成员换成全量重训版并切 active，
+  #   官方分 0.758 → 0.741（−0.017）—— 与 exp_008 同型复现：盲链上叠盲成员（全量 dino 已见全部身份，
+  #   无无泄漏验证；其筛选证据来自缩水基座，部署到全量基座失据）= 无效验证，官方判负。
+  #   处置：active 退回 final_full_b75_cm_dino_nocnxs_dir（dino 用缩水版 ep040/060），
+  #         prediction.json 回滚 prediction_11m_wave11_bak.json（sha 9C7A42B9…）。
+  #   教训：全量基座上任何「已见全部身份」的新成员/新权重，官方分前一律视为未验证；
+  #         本地三重门槛只对「同基座、同泄漏状态」成立（exp_008 / 波次12 双重证据）。
+  # 波次13（2026-10-12，【S5 转导互反重排，已部署待官方分】）：prediction.json = S5 候选
+  #   （sha 237F1E77…），基座仍是本 active 预设的 11 成员 RRF，**未改任何成员/权重/k/方向覆盖**。
+  #   配方（S5 = 保真基座 + R2 互反项）：
+  #     基座：11 个现役 pred 文件 RRF（k=10、member_topk=100、O2S 覆盖 mos75=1.5/shipvit=0.5/cnx_t=0.25），
+  #           保真自检 267/267 逐字节复现波次11 部署物（sha 9C7A42B9…）。
+  #     R2 互反项：10 个现役权重稠密 sim（tta+rerank，k1=20/k2=6/λ=0.3）在**目标模态内**归一化均值，
+  #           score(c) = RRF_base(c) + 0.5 * R2(c)；base75 无稠密 sim（权重在队友 D: 盘），仅经基座贡献。
+  #   稠密 sim 资产：sims/test_rerank_full/sim_*.pt（7 个 ship_reid 全量+缩水 dino）+
+  #           sims/test_rerank/sdfsim_{mos75,ep45,ep25}_full/sim.pt（3 个 SDF-Net 全量），均 267×1800。
+  #   关键坑（务必复用）：①gallery 模态判定必须用 task.json 的 **modality 字段**——
+  #           image_path 全是 gallery/g_xxx.tif，无光学/SAR 前缀，按路径 startswith 会全判成 SAR；
+  #         ②sims/test_rerank/ 原有 sim_*.pt 是 10-10 旧权重快照（ship_reid 系 top1 一致率 0~2/267），
+  #           与现役 pred 不同源，**不可用作现役基座**，须用现役权重重新生成稠密 sim；
+  #         ③现役 pred 文件 = inference.py --tta --rerank 的 out_prediction 输出（重跑 267/267 复现证实），
+  #           但从 save_sim 稠密矩阵排序**无法**重现其 top-100（rerank 非线性），故基座只能用 pred 文件 RRF。
+  #   与现役（0.758）差异：top-1 仅 5 条翻转（O2S 2 / S2O 3 / O2O 0），全为保守重排
+  #           （新 top1 均在现役该 query top-10 内、零池外新增），平均交集 9.63/10 —— 同 exp_008 的 S5 中性特征。
+  #   预期 +0.02（S5 在 8 成员官方实测 0.74→0.76，唯一被官方证真的增益；本次规避了 exp_008 盲成员入 RRF 层之坑）。
+  #   回退：prediction.json 回滚 prediction_wave11_0758_bak.json（波次11，sha 9C7A42B9…）。
+  #   2026-10-13 补充：S5 配方已入库 scripts/s5_rebuild.py（--fidelity 重跑 267/267 逐位复现 sha 237F1E77 部署物）。
+  active: final_full_b75_cm_dino_nocnxs_dir
 
   # 权重预设：预设名 -> {成员名: 权重}
   # 顺序即融合时成员与权重的绑定顺序，由 Python 侧读取，不经命令行
@@ -111,6 +152,147 @@ ensemble:
       ship_reid_convnext_s_pure_full: 0.75
       ship_reid_swin_s_v2_full: 1.0
       sdfnet_base75: 1.0
+
+    # 波次7（2026-10-12，候选，未切 active）：final_full_b75 + 强配方全量成员（10 成员）
+    #   依据 exp_010 结论 B（k=3 生产口径，只看总体分）：convnext_t 软化到 0.5、
+    #   追加强配方@1.0，2828 口径 local Final 0.6905->0.6966（+0.0061），三方向全非负。
+    #   本预设把同方案迁移到全量 active 口径；因全量成员已见全部身份，**无无泄漏本地验证**（盲）。
+    #   验证方式：17_submit_4_rrf_fuse.bat --preset final_full_b75_cm --out ../prediction_cm.json
+    #   确认优于 final_full_b75 后再改 ensemble.active。
+    final_full_b75_cm:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_full: 0.5
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+
+    # 波次8（2026-10-12，候选）：final_full_b75_cm 10 成员 + DINOv2-B ep040+ep060（12 成员）
+    #   DINOv2-B 缩水模型（2828 身份）三重门槛已过：ep040+ep060 联合入集 local Final +0.0088（k=3）
+    #   ViT+DINOv2 预训练权重带来独特架构多样性（现役无 ViT 骨干成员）。
+    #   推理只用特征（与训练身份数无关），2828 缩水模型可直接用于测试集推理。
+    #   验证：scripts/repro_cfg.py fuse --preset final_full_b75_cm_dino --out ../prediction_dino.json
+    final_full_b75_cm_dino:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_full: 0.5
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+      ship_reid_dinov2_b_ep040: 1.0
+      ship_reid_dinov2_b_ep060: 1.0
+
+    # 波次9（2026-10-12，候选）：final_full_b75_cm_dino 剪枝 —— 删除最弱成员 cnx_s（11 成员）
+    #   依据（无泄漏 2828 口径 local_val，11 成员同构子集）：
+    #     LOO 单删 cnx_s +0.0066（fold0 +0.0062 / fold1 +0.0070，双折过 G1 门槛 >=0.003）；
+    #     折验证贪心后向剪枝第一步亦为删除 cnx_s；嵌套留出验证（在一半上选、另一半评估）
+    #     parity 两向均正（held-out fold1 +0.0038 / held-out fold0 +0.0093），非选择偏差。
+    #   原理：cnx_s（ConvNeXt-Small w_cm=0.3，权 0.5）与更强的同骨干 cnx_s_pure（w_cm=1.0，权 0.75）
+    #         功能重叠，且强配方成员引入后其边际贡献被吸收。
+    #   剪枝后 k 重扫：k=10 仍为峰值（0.7079），权重扰动均无正增益，故 k=10 / 其余权重全部沿用。
+    #   仅删一个成员、改动最小；base75 无 local_val sim 无法评估，按现状保留。
+    #   验证：scripts/repro_cfg.py fuse --preset final_full_b75_cm_dino_nocnxs --out ../prediction_pruned.json
+    final_full_b75_cm_dino_nocnxs:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+      ship_reid_dinov2_b_ep040: 1.0
+      ship_reid_dinov2_b_ep060: 1.0
+
+    # 波次10（2026-10-12，候选）：方向特异性融合 —— 仅 O2S 方向覆盖 3 个成员权重（per_direction）
+    #   依据（无泄漏 2828 local_val 口径，删去无 sim 的 base75 后 10 成员同构子集）：
+    #     方向贡献矩阵（单模强度 / LOO / 权重扫描）显示 O2S 侧存在明确方向偏好 ——
+    #       mos75（最强 SAR 侧单模 0.5810）1.0->1.5；shipvit（O2S 最弱单模 0.4257）1.0->0.5；
+    #       cnx_t（O2S 净拖累，LOO +0.0042）0.5->0.25；S2O/O2O 维持基线（S2O 无稳健单参数信号，
+    #       O2O 仅 38 query 且已近饱和 0.9781，杠杆 <= 0.002）。
+    #     门槛：full +0.0042；parity/halves/phase4 三种折分割双折全部 >= +0.003；
+    #       k∈{1,3,5,7,10,15,20,40} 全 k 全折为正（min +0.0002）；3 参数受限嵌套（fold0<->fold1 互换）双正。
+    #     对照（均已弃用）：13 参数全向坐标下降 +0.0129 但嵌套留出为负（-0.0025，过拟合）；
+    #       变体 C（cnx_t 保持 0.5）+0.0049、D5/D6（追加 ep45/cnx_s_pure）+0.0018/+0.0021 均未过全部门槛。
+    #   验证：scripts/repro_cfg.py fuse --preset final_full_b75_cm_dino_nocnxs_dir --out ../prediction_dir.json
+    final_full_b75_cm_dino_nocnxs_dir:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+      ship_reid_dinov2_b_ep040: 1.0
+      ship_reid_dinov2_b_ep060: 1.0
+      per_direction:
+        O2S:
+          sdfnet_mos75_full: 1.5
+          ship_reid_vit_full: 0.5
+          ship_reid_convnext_t_full: 0.25
+
+    # 波次14（2026-10-13，候选，未切 active）：现役 11 成员，仅 shipvit_full -> shipvit_full_ms
+    #   其余 10 成员、权重、k=10、O2S 方向覆盖全部沿用波次11 现役；唯一变量 = shipvit 的
+    #   特征提取协议（base -> tta+rerank+multiscale 0.7/0.2/0.1，含 tta+rerank 不变）。
+    #   证据见成员池 ship_reid_vit_full_ms 注释（缩水成员消融 +0.0094，三折分割 G1 全过）。
+    #   验证：scripts/repro_cfg.py fuse --preset final_full_b75_cm_dino_nocnxs_dir_ms --out ../prediction_ms_shipvit.json
+    #   路线2（保 S5 层，推荐）：scripts/s5_rebuild.py --emit-ms -> prediction_s5_ms.json（sha 224AC35C…）
+    #     = S5 配方（--fidelity 267/267 复现）下 shipvit 同步换 ms（基座 pred + 稠密 sim），
+    #       top-1 翻转 9 条 vs 现役（S5 自身 5 条 + ms 追加 4 条），全部落在现役 top-10 内（保守重排）；
+    #       ms 稠密 sim = sims/test_rerank_full_ms/sim_shipvit_full_ms.pt（tta+rerank+multiscale 0.7/0.2/0.1）。
+    #   注：ms 仅改 shipvit 推理协议，其 checkpoint/训练数据与现役相同（非波次12 型「新盲权重」）。
+    final_full_b75_cm_dino_nocnxs_dir_ms:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full_ms: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+      ship_reid_dinov2_b_ep040: 1.0
+      ship_reid_dinov2_b_ep060: 1.0
+      per_direction:
+        O2S:
+          sdfnet_mos75_full: 1.5
+          ship_reid_vit_full_ms: 0.5
+          ship_reid_convnext_t_full: 0.25
+
+    # 波次12（2026-10-12，候选，未切 active）：波次11 现役 11 成员，仅把 dino 两成员换成全量重训版
+    #   动机：screen dino（2828 身份）是现役唯一「缩水训练口径」成员；全量版同配方/同 seed、
+    #     仅训练身份数 2828->3534（沿波次5 全量重训先例）。全量成员已见全部身份 → **盲提交、无本地验证**。
+    #   其余 9 成员、权重、k=10、per_direction O2S 覆盖全部沿用波次11 现役；本地分不可比，只能盲测。
+    #   对照：现役 prediction.json（波次11，sha 9C7A42B9…）；回退只需把 dino 两成员 pred 指回 _v2 文件。
+    #   验证：scripts/repro_cfg.py fuse --preset final_full_b75_cm_dino_full_nocnxs_dir --out ../prediction_dino_full.json
+    final_full_b75_cm_dino_full_nocnxs_dir:
+      sdfnet_mos75_full: 1.0
+      sdfnet_ep45_full: 1.0
+      sdfnet_ep25_full: 1.0
+      ship_reid_vit_full: 1.0
+      ship_reid_convnext_t_full: 0.5
+      ship_reid_convnext_t_strong_cm_full: 1.0
+      ship_reid_convnext_s_pure_full: 0.75
+      ship_reid_swin_s_v2_full: 1.0
+      sdfnet_base75: 1.0
+      ship_reid_dinov2_b_full_ep040: 1.0
+      ship_reid_dinov2_b_full_ep060: 1.0
+      per_direction:
+        O2S:
+          sdfnet_mos75_full: 1.5
+          ship_reid_vit_full: 0.5
+          ship_reid_convnext_t_full: 0.25
 
     # 回退选项：仅锚点 + 异构分支
     # 注意：成员池里的 ship_reid_vit 已切到 top-100 文件，而 sdfnet_ep80 仍是 top-10，
@@ -207,18 +389,101 @@ ensemble:
       vit_config: config/train_swin_s_v2_full.yaml
       vit_ckpt: outputs/full_swin_s_v2/checkpoints/epoch_060.pth
 
+    # ---- 波次14（2026-10-13）：Phase 1 多尺度特征融合，仅 shipvit 成员 ----
+    #   依据（缩水成员无泄漏 local_val 消融：8 成员 RRF、k=10、member_topk=100 生产口径，
+    #   scripts/phase1_ensemble_ab.py，成员排名 sims/localval_ab/）：
+    #     5 个 ship_reid 成员全量换 ms：Final 0.6874->0.6831（-0.0043）——同质化代价：
+    #       成员两两 top-1 一致率 0.3867->0.4110，ConvNeXt/Swin 家族趋于雷同。
+    #     仅 shipvit 换 ms：Final +0.0094；parity/halves/phase4 三种折分割双折增益 min +0.0067
+    #       （全部 >= +0.003）；k∈{3,5,7,10,15} 为正（k=10 = +0.0074），仅 k=40 微负（-0.0011）；
+    #       32 子集扫描 16/16「含 shipvit」为正、16/16「不含 shipvit」为负（符号系统性，非单点噪声）。
+    #   生成命令（必须带 ms 参数；16 号脚本不会自动加）：
+    #     ship_reid_vit\inference.py --config config/train_vit_full.yaml
+    #       --ckpt outputs/full_vit/checkpoints/epoch_100.pth --use_test_task --topk 100
+    #       --tta --rerank --multiscale --ms_weights 0.7 0.2 0.1
+    #       --out_prediction sims/test_full/ms_top100_shipvit_full.json
+    #   单模证据（同协议 tta+rerank）：shipvit 0.4877->0.5041（+0.0164，5 成员中最大）
+    - name: ship_reid_vit_full_ms
+      ckpt: ""
+      pred: sims/test_full/ms_top100_shipvit_full.json
+      vit_config: config/train_vit_full.yaml
+      vit_ckpt: outputs/full_vit/checkpoints/epoch_100.pth
+
+    # ---- 波次7：全量数据 + 强跨模态配方（w_cm=1.0 对称）ConvNeXt-Tiny ep80 ----
+    #   exp_010 已证明「强配方 × ConvNeXt-T」在 2828 口径把单模 0.5186->0.5345，
+    #   集成方案 convnext_t@0.5 + 强配方@1.0 在 k=3 生产口径 local Final +0.0061（三方向全非负）。
+    #   本成员为该配方的全量(3534 身份)版，供并入 active 全量提交使用（盲）。
+    #   对照：ship_reid_convnext_t_full（同骨干 w_cm=0.3 全量基线）
+    - name: ship_reid_convnext_t_strong_cm_full
+      ckpt: ""
+      pred: sims/test_full/top100_convnext_t_strong_cm_full.json
+      vit_config: config/train_convnext_t_strong_cm_full.yaml
+      vit_ckpt: outputs/full_convnext_t_strong_cm/checkpoints/epoch_080.pth
+
     # 波次6：队友 base75 互补成员（ab75 配方，本地验证综合 0.5985）
     #   pred 为 test 集 top-100 排名（267×100 无重复）；sim 备份 sims/test_base75_sim.pt
     - name: sdfnet_base75
       ckpt: D:/Projects/Multi-source Satellite Cross-modal Ship Re-Identification/ship_reid_system/outputs/ab75/base75_best.pth
       pred: sims/test/top100_base75.json
 
+    # ---- 波次8：DINOv2-B 缩水模型（2828 身份，三重门槛已过）----
+    #   ep040 单追过 G1+G2（k=3 +0.0067，min +0.0025）；ep040+ep060 联合过 G1+G2（k=3 +0.0088，min +0.0020）
+    #   单模最佳 ep040 Final=0.5829（史上第二单模）。ViT+DINOv2 预训练权重带来独特架构多样性。
+    #   推理只用特征（与训练身份数无关），2828 缩水模型可直接用于测试集推理。
+    # 波次11（2026-10-12）协议修复：dino 两成员的测试侧排名由 base 纯特征改为 tta+rerank
+    #   动机：全队唯一协议异类 —— 其余 9 个成员文件均为 tta+rerank 产物（16 号脚本同款命令；
+    #     sims/test_rerank 批次 sim 可将其 top-100 精确重现 267/267），而 dino v1 文件经逐位复现
+    #     核实为其 checkpoint 的 base 协议原生输出（267/267 top-100 全等）。
+    #   前车之鉴：首版修复误引 10-10 遗留的 sims/test_rerank/sim_dinov2_b_ep0XX.pt；时间线核查
+    #     证明该快照模型已被 10-12 重训的 checkpoint 取代（screen ckpt 16:44~17:22 重写、
+    #     sims/screen_dinov2_b 17:29 为 10-12 版），故弃用，改为当前 checkpoint 的原生输出：
+    #     ship_reid_vit\inference.py --config config/train_dinov2_b.yaml --use_test_task
+    #         --topk 100 --tta --rerank --out_prediction sims/test_full/top100_dinov2_b_ep0XX_v2.json
+    #   同快照 local_val 量化（10 成员子集 + O2S 方向覆盖，parity 折，k=10 生产口径；
+    #     base 协议对照 sim 见 sims/localval_dino_base/）：
+    #     Δ(rerank−base)=+0.0037（fold0 +0.0087 / fold1 −0.0013）；方向 −0.0035/+0.0069/+0.0219
+    #     （O2O 仅 38q，方差大）；k∈{7,10,15,40} 为正、{1,3,5,20} 为负/零 —— 幅度小、k 敏感，
+    #     不作强增益声明。反证：ep040 单模 base 0.5961 > rerank 0.5829；测试侧 top1 共识
+    #     base 0.597/0.581 > rerank 0.539/0.566。
+    #   决策：协议一致性优先（其余 9 成员 + 全部 local_val 调参环境均为 tta+rerank，含 dino 自身
+    #     入选门槛），且生产 k=10 同向为正。回退：pred 改回 sims/test_full/top100_dinov2_b_ep0XX.json
+    #     （base 版；或 prediction.json 回滚 prediction_11m_dir_k10_bak.json）。
+    #   波次11 部署 sha256=9C7A42B9AE33AC4F7511DA5D507E62F2D481EBE16E5B5CF2B4FFE9533D50D042
+    - name: ship_reid_dinov2_b_ep040
+      ckpt: ""
+      pred: sims/test_full/top100_dinov2_b_ep040_v2.json
+      vit_config: config/train_dinov2_b.yaml
+      vit_ckpt: outputs/screen_dinov2_b/checkpoints/epoch_040.pth
+    - name: ship_reid_dinov2_b_ep060
+      ckpt: ""
+      pred: sims/test_full/top100_dinov2_b_ep060_v2.json
+      vit_config: config/train_dinov2_b.yaml
+      vit_ckpt: outputs/screen_dinov2_b/checkpoints/epoch_060.pth
+
+    # ---- 波次12（2026-10-12）：DINOv2-B 全量重训版（labels.csv 3534 身份/7422 图）----
+    #   与 screen 版（config/train_dinov2_b.yaml）同配方/同 seed，唯一变量为训练身份数
+    #   （2828 -> 3534），沿波次5 全量重训先例；全量成员已见全部身份 → **盲、无无泄漏本地验证**。
+    #   取点沿用 screen 版冠军 epoch（ep040/ep060）；测试侧 top-100 用生产协议（tta+rerank）生成：
+    #     ship_reid_vit\inference.py --config config/train_dinov2_b_full.yaml
+    #         --use_test_task --topk 100 --tta --rerank --out_prediction sims/test_full/top100_dinov2_b_full_ep0XX.json
+    #   用途：候选预设 final_full_b75_cm_dino_full_nocnxs_dir 替换 screen dino 两成员；不改现役。
+    - name: ship_reid_dinov2_b_full_ep040
+      ckpt: ""
+      pred: sims/test_full/top100_dinov2_b_full_ep040.json
+      vit_config: config/train_dinov2_b_full.yaml
+      vit_ckpt: outputs/full_dinov2_b/checkpoints/epoch_040.pth
+    - name: ship_reid_dinov2_b_full_ep060
+      ckpt: ""
+      pred: sims/test_full/top100_dinov2_b_full_ep060.json
+      vit_config: config/train_dinov2_b_full.yaml
+      vit_ckpt: outputs/full_dinov2_b/checkpoints/epoch_060.pth
+
 # 仅用于 18 号脚本回显本地验证基准，不参与流程
 # 折切分口径：scripts/b1_topk_probe.py::fold_split（各方向内部 folds[i % 2]，725/725）
 # 注：此处数值与旧版记录（0.6346 / 0.6131 / 0.6561）不可直接比较——旧版折切分已无法复现
 local_val:
-  task: 赛题6-初赛/训练数据/local_val_task.json
-  gt: 赛题6-初赛/训练数据/local_val_gt.json
+  task: ../question6-data/traindata/local_val_task.json
+  gt: ../question6-data/traindata/local_val_gt.json
   # 波次5 全量重训后**无无泄漏本地验证**（成员训练已见全部 3534 身份），故不提供数值。
   # 下面 0.6905 / 0.7046 / 0.6764 是 final（2828 身份版）最后一次已验证基准，仅作参照。
   final: "N/A (blind; exp_005 extrapolated +0.02~+0.04 vs final 0.6905)"

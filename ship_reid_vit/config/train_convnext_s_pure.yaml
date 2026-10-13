@@ -32,6 +32,7 @@ optical_std: [0.1967, 0.1956, 0.1908]
 sar_mean: [0.0242, 0.0242, 0.0242]
 sar_std: [0.1214, 0.1214, 0.1214]
 sar_speckle_aug: true
+sar_scatter_aug: false   # Phase 1: SAR 散射点感知增强开关（训练端）
 
 # ---------- PK 采样（与 convnext_s 一致：bs=128 为 13.2GB/528 img/s） ----------
 pk_p: 64

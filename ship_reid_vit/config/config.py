@@ -37,6 +37,7 @@ class Config:
     image_size: int = 256            # ResNet 骨干输入尺寸；ViT 骨干自动使用 224
     num_workers: int = 4
     sar_speckle_aug: bool = True     # 训练时对 SAR 图模拟斑点噪声增强
+    sar_scatter_aug: bool = False    # SAR 散射点感知增强（弹性形变+散射对比度+噪声注入）
     # 模态独立归一化（默认 ImageNet；可由 scripts/compute_stats.py 生成后填入）
     optical_mean: tuple = (0.485, 0.456, 0.406)
     optical_std: tuple = (0.229, 0.224, 0.225)
@@ -63,6 +64,8 @@ class Config:
     num_classes: int = 40            # 身份分类头输出（auto_num_classes 时由数据集推断）
     embedding_dim: int = 0           # 检索特征维度（0 = 骨干输出维度，不额外投影）
     modality_projection: bool = False  # True 时使用模态感知投影头（O/S 独立投影）
+    directional_projection: bool = False  # True 时启用方向特异性投影头（Phase 4：O2S/S2O 独立投影）
+    w_directional: float = 0.3       # 方向特异性 InfoNCE 辅助损失权重（>0 时投影头才有梯度）
 
     # ---------- 损失 ----------
     w_supcon: float = 0.5            # 跨模态监督对比损失权重
@@ -97,6 +100,9 @@ class Config:
     use_ema: bool = True             # 启用 EMA 权重（推理时使用）
     amp: bool = True                 # 启用 AMP 混合精度
     resume: str = ""                 # checkpoint 路径，非空则断点续训
+    # ---------- 跨模态硬负样本挖掘（Phase 2） ----------
+    hard_neg_mining_interval: int = 0  # 每 N 个 epoch 挖掘一次硬负样本（0=禁用）
+    hard_neg_topk: int = 5             # 每身份挖掘的 top-k 硬负样本身份数
 
     # ---------- 输出 ----------
     output_dir: str = "outputs"

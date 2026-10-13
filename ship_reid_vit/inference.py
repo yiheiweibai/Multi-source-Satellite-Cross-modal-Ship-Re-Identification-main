@@ -19,11 +19,14 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
+import torch
+
 from config import Config
 from data import ensure_dummy_data, load_task
 from inference import (
     RetrievalEngine,
-    retrieve_for_submission,
+    compute_sim,
+    indices_from_sim,
     save_prediction,
     topk_results,
     validate_prediction,
@@ -54,6 +57,12 @@ def parse_args() -> argparse.Namespace:
         help="模式2：每种模态最多取 M 个 gallery（0=全部，冒烟调试用）",
     )
     p.add_argument("--out_prediction", type=str, default="", help="模式2输出 prediction.json 路径")
+    p.add_argument(
+        "--save_sim", type=str, default="",
+        help="把 (Q,G) 相似度矩阵与 q/g 特征落盘到该目录（供成员筛选/融合复用）；"
+             "落盘内容与 sims/localval/ 的 sim_<tag>.pt + feat_<tag>.pt 一致",
+    )
+    p.add_argument("--tag", type=str, default="", help="--save_sim 时的文件名标签（默认用 ckpt 名）")
     p.add_argument("--topk", type=int, default=10)
     p.add_argument("--device", type=str, default="cuda")
     # 后处理开关
@@ -61,6 +70,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rerank", action="store_true", help="k-reciprocal 重排序")
     p.add_argument("--qe", action="store_true", help="查询扩展（top-1 gallery 特征扩展 query）")
     p.add_argument("--cluster", action="store_true", help="Gallery 聚类 + 类别中心检索")
+    # 多尺度特征融合
+    p.add_argument("--multiscale", action="store_true", help="多尺度特征融合（全局+中心局部+水平条带）")
+    p.add_argument("--ms_weights", type=float, nargs=3, default=[0.5, 0.3, 0.2],
+                   metavar=("G", "C", "S"),
+                   help="多尺度权重：全局 中心局部 水平条带（默认 0.5 0.3 0.2）")
+    # Phase 4：方向特异性投影
+    p.add_argument("--directional", action="store_true", help="方向特异性投影（O2S/S2O 独立投影头）")
     return p.parse_args()
 
 
@@ -105,11 +121,29 @@ def run_prediction(cfg, args) -> None:
     print(f"[prediction] queries={len(task['queries'])} ({dist}), gallery={len(task['gallery'])}")
 
     engine = RetrievalEngine(cfg, args.ckpt, device=args.device)
-    indices = retrieve_for_submission(
-        engine, query_loader, gallery_loader, task["queries"], task["gallery"], topk=args.topk,
+    sim, q_feats, g_feats, g_mods = compute_sim(
+        engine, query_loader, gallery_loader, task["queries"], task["gallery"],
         tta=args.tta, rerank=args.rerank, qe=args.qe, cluster=args.cluster,
+        multiscale=args.multiscale, ms_weights=tuple(args.ms_weights),
+        directional=args.directional,
     )
-    print(f"[后处理] TTA={args.tta}, rerank={args.rerank}, QE={args.qe}, cluster={args.cluster}")
+    if args.save_sim:
+        tag = args.tag or Path(args.ckpt).stem
+        out_dir = Path(args.save_sim)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(sim.cpu(), out_dir / f"sim_{tag}.pt")
+        torch.save(
+            {
+                "q": q_feats.cpu(), "g": g_feats.cpu(),
+                "q_ids": [q["query_id"] for q in task["queries"]],
+                "g_ids": [g["image_id"] for g in task["gallery"]],
+            },
+            out_dir / f"feat_{tag}.pt",
+        )
+        print(f"[save_sim] {out_dir / f'sim_{tag}.pt'} {tuple(sim.shape)}")
+    indices = indices_from_sim(sim, g_mods, task["queries"], task["gallery"], topk=args.topk)
+    print(f"[后处理] TTA={args.tta}, rerank={args.rerank}, QE={args.qe}, cluster={args.cluster}, "
+          f"multiscale={args.multiscale}, ms_weights={args.ms_weights}, directional={args.directional}")
     prediction = {
         task["queries"][qi]["query_id"]: [task["gallery"][gi]["image_id"] for gi in indices[qi].tolist()]
         for qi in range(len(task["queries"]))

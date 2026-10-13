@@ -70,6 +70,9 @@ class CrossModalPKSampler(Sampler[int]):
     - 优先选择同时含双模态样本的身份，保证批内跨模态 positive pair 充足。
     跨模态损失（CrossModalInfoNCE / CrossModalHardTriplet）依赖批内 O/S 对齐，
     本采样器是其数据侧配套。
+
+    硬负样本挖掘扩展：hard_negative_ids 非空时，优先从这些身份中采样
+    （用于 Phase 2 跨模态硬负样本训练，提升细粒度判别能力）。
     """
 
     def __init__(
@@ -110,6 +113,17 @@ class CrossModalPKSampler(Sampler[int]):
             for lab in self.valid_labels:
                 self.mod_by_label[lab] = (list(self.indices_by_label[lab]), [])
 
+        # Phase 2：硬负样本身份集合（由外部挖掘后注入）
+        self.hard_negative_ids: Optional[set] = None
+
+    def set_hard_negatives(self, hard_ids: Optional[set]) -> None:
+        """注入硬负样本身份集合。None 表示禁用硬负样本优先采样。"""
+        if hard_ids:
+            # 仅保留双模态身份（跨模态损失需要）
+            self.hard_negative_ids = set(hard_ids) & set(self.dual_labels)
+        else:
+            self.hard_negative_ids = None
+
     def __len__(self) -> int:
         return (self.n + self.p * self.k - 1) // (self.p * self.k) * self.p * self.k
 
@@ -117,8 +131,19 @@ class CrossModalPKSampler(Sampler[int]):
         self.rng = random.Random()
         num_batches = max(1, (self.n + self.p * self.k - 1) // (self.p * self.k))
         for _ in range(num_batches):
-            pool = self.dual_labels if self.dual_labels else self.valid_labels
-            labs = self.rng.sample(pool, min(self.p, len(pool)))
+            # Phase 2：硬负样本身份优先采样（若启用）
+            if self.hard_negative_ids:
+                hard_pool = list(self.hard_negative_ids)
+                n_hard = min(len(hard_pool), max(1, self.p // 2))
+                hard_labs = self.rng.sample(hard_pool, n_hard)
+                remaining = self.p - len(hard_labs)
+                pool = self.dual_labels if self.dual_labels else self.valid_labels
+                pool = [lab for lab in pool if lab not in hard_labs]
+                other_labs = self.rng.sample(pool, min(remaining, len(pool)))
+                labs = hard_labs + other_labs
+            else:
+                pool = self.dual_labels if self.dual_labels else self.valid_labels
+                labs = self.rng.sample(pool, min(self.p, len(pool)))
             for lab in labs:
                 for idx in self._sample_identity(lab):
                     yield idx

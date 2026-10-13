@@ -70,10 +70,12 @@ def member_pool(cfg: dict) -> dict:
     return pool
 
 
-def resolve_members(cfg: dict, preset: str = "", weights: list | None = None) -> tuple[str, list]:
+def resolve_members(cfg: dict, preset: str = "", weights: list | None = None) -> tuple[str, list, dict]:
     """按 active 预设（或 --preset 覆盖）解析参与融合的成员。
 
-    返回 (预设名, members)；members 元素为 (成员名, 预测绝对路径, 权重)。
+    返回 (预设名, members, per_dir)；members 元素为 (成员名, 预测绝对路径, 权重)。
+    per_dir 为可选的方向覆盖表 {方向: {成员名: 权重}}（预设内键 per_direction），
+    方向 ∈ {O2S, S2O, O2O}，未列出的方向沿用基础权重；无覆盖时为 {}。
     """
     ens = cfg["ensemble"]
     pool = member_pool(cfg)
@@ -85,7 +87,8 @@ def resolve_members(cfg: dict, preset: str = "", weights: list | None = None) ->
     if name not in presets:
         raise SystemExit("预设不存在: {}（可用: {}）".format(
             name, ", ".join(presets) or "无"))
-    spec = presets[name] or {}
+    spec = dict(presets[name] or {})
+    per_dir_raw = spec.pop("per_direction", None) or {}
     if not spec:
         raise SystemExit("预设 {} 为空，至少需要一个成员".format(name))
 
@@ -106,22 +109,39 @@ def resolve_members(cfg: dict, preset: str = "", weights: list | None = None) ->
         out = [(n, p, float(w)) for (n, p, _), w in zip(out, weights)]
         if any(w <= 0 for _, _, w in out):
             raise SystemExit("--weights 中的权重必须 > 0")
-    return name, out
+
+    names = {n for n, _, _ in out}
+    per_dir = {}
+    for d, ov in per_dir_raw.items():
+        d = str(d)
+        if d not in ("O2S", "S2O", "O2O"):
+            raise SystemExit("预设 {} 的 per_direction 含未知方向: {}（仅 O2S/S2O/O2O）".format(name, d))
+        per_dir[d] = {}
+        for mname, w in (ov or {}).items():
+            if mname not in names:
+                raise SystemExit("预设 {} 的 {} 方向覆盖引用了非预设成员: {}".format(name, d, mname))
+            w = float(w)
+            if w < 0:
+                raise SystemExit("预设 {} 的 {} 方向覆盖成员 {} 权重必须 >= 0（当前 {}）".format(
+                    name, d, mname, w))
+            per_dir[d][mname] = w
+    return name, out, per_dir
 
 
 def build(cfg: dict, preset: str = "", weights: list | None = None):
-    """返回 (变量字典, 推理步骤, vit 推理步骤, 融合成员, 预设名)。
+    """返回 (变量字典, 推理步骤, vit 推理步骤, 融合成员, 预设名, 方向覆盖表)。
 
     steps     元素为 (成员名, ckpt绝对路径, 预测输出绝对路径)        —— 由 15 号推理
     vit_steps 元素为 (成员名, config绝对路径, ckpt绝对路径, 预测输出绝对路径) —— 由 16 号推理
     members   元素为 (成员名, 预测绝对路径, 权重)                    —— 当前预设的全部成员
+    per_dir   方向覆盖表 {方向: {成员名: 权重}}，无则 {}
     """
     p, ens = cfg["paths"], cfg["ensemble"]
     sdfnet_dir = resolve(p["sdfnet_dir"])
     shipvit_dir = resolve(p["shipvit_dir"])
     ckpt_dir = resolve(p["sdf_checkpoint_dir"])
     pool = member_pool(cfg)
-    preset_name, members = resolve_members(cfg, preset, weights)
+    preset_name, members, per_dir = resolve_members(cfg, preset, weights)
 
     v = {
         "REPRO_DIR": str(SHIP_DIR),
@@ -166,7 +186,13 @@ def build(cfg: dict, preset: str = "", weights: list | None = None):
     v["RRF_N"] = str(len(members))
     v["RRF_MEMBERS"] = " ".join("{}({})".format(n, w) for n, _, w in members)
     v["RRF_WEIGHTS"] = " ".join(str(w) for _, _, w in members)
-    return v, steps, vit_steps, members, preset_name
+    per_dir_txt = "-"
+    if per_dir:
+        per_dir_txt = " ".join(
+            "{}[{}]".format(d, ",".join("{}({})".format(n, w) for n, w in per_dir[d].items()))
+            for d in ("O2S", "S2O", "O2O") if d in per_dir)
+    v["RRF_PER_DIR"] = per_dir_txt
+    return v, steps, vit_steps, members, preset_name, per_dir
 
 
 def required_items(v: dict, steps: list, vit_steps: list, members: list) -> list:
@@ -244,8 +270,11 @@ def do_check(v: dict, steps: list, vit_steps: list, members: list) -> int:
     return 0
 
 
-def do_fuse(v: dict, members: list, out_path: str = "") -> int:
-    """按当前预设执行 RRF 融合（成员与权重按序绑定，不经过 shell）。"""
+def do_fuse(v: dict, members: list, per_dir: dict, out_path: str = "") -> int:
+    """按当前预设执行 RRF 融合（成员与权重按序绑定，不经过 shell）。
+
+    per_dir 非空时按 query 方向分别融合：该方向使用「基础权重 + 方向覆盖」，其余方向用基础权重。
+    """
     spec = importlib.util.spec_from_file_location(
         "rrf_fuse", str(Path(__file__).resolve().parent / "rrf_fuse.py"))
     rrf_fuse = importlib.util.module_from_spec(spec)
@@ -258,6 +287,7 @@ def do_fuse(v: dict, members: list, out_path: str = "") -> int:
 
     lists = [rrf_fuse.load_pred(p) for _, p, _ in members]
     weights = [w for _, _, w in members]
+    names = [n for n, _, _ in members]
     k, topk = float(v["RRF_K"]), int(v["RRF_TOP_K"])
 
     base = set(lists[0])
@@ -266,10 +296,38 @@ def do_fuse(v: dict, members: list, out_path: str = "") -> int:
             print("[repro_cfg] query 集合不一致: {}".format(path))
             return 1
 
-    pred = rrf_fuse.rrf(lists, weights, k, topk)
-    print("preset: {}  ({} members, k={})".format(v["RRF_PRESET"], len(members), k))
+    if per_dir:
+        with open(v["TEST_TASK"], encoding="utf-8") as f:
+            task = json.load(f)
+        qdir = {q["query_id"]: q["query_type"] for q in task["queries"]}
+
+        def fuse_subset(qids, wvec):
+            sub = [{qid: lst[qid] for qid in qids} for lst in lists]
+            return rrf_fuse.rrf(sub, wvec, k, topk)
+
+        pred = {}
+        for d in ("O2S", "S2O", "O2O"):
+            qids = [qid for qid in qdir if qdir[qid] == d]
+            if not qids:
+                continue
+            ov = per_dir.get(d)
+            wvec = [float(ov[n]) if (ov and n in ov) else w for n, w in zip(names, weights)]
+            pred.update(fuse_subset(qids, wvec))
+        rest = [qid for qid in lists[0] if qid not in pred]
+        if rest:
+            pred.update(fuse_subset(rest, weights))
+    else:
+        pred = rrf_fuse.rrf(lists, weights, k, topk)
+
+    print("preset: {}  ({} members, k={}{})".format(
+        v["RRF_PRESET"], len(members), k, "，方向覆盖生效" if per_dir else ""))
     for name, path, w in members:
         print("  member w={:<5} {:<16} {}".format(w, name, path))
+    if per_dir:
+        for d in ("O2S", "S2O", "O2O"):
+            if d in per_dir:
+                print("  per_direction {}: {}".format(
+                    d, ", ".join("{}={}".format(n, w) for n, w in per_dir[d].items())))
     print("RRF fusion done: {} queries".format(len(pred)))
 
     rrf_fuse.verify(pred, v["TEST_TASK"], topk)
@@ -296,7 +354,11 @@ def do_show(v: dict, steps: list, vit_steps: list, cfg: dict) -> int:
     print("\npresets:")
     for pname, spec in (cfg["ensemble"].get("presets") or {}).items():
         mark = " *active" if pname == v["RRF_PRESET"] else ""
-        body = ", ".join("{}={}".format(k, w) for k, w in (spec or {}).items())
+        spec = spec or {}
+        body = ", ".join("{}={}".format(k, w) for k, w in spec.items() if k != "per_direction")
+        pd = spec.get("per_direction")
+        if pd:
+            body += "  + per_direction({})".format(", ".join(str(d) for d in pd))
         print("  {:<16}{}{}".format(pname, body, mark))
 
     print("\nSDF-Net inference steps for the active preset ({}):".format(len(steps)))
@@ -328,7 +390,7 @@ def main() -> int:
         return 1
 
     cfg = load(cfg_path)
-    v, steps, vit_steps, members, _ = build(cfg, args.preset, args.weights)
+    v, steps, vit_steps, members, _, per_dir = build(cfg, args.preset, args.weights)
 
     if args.cmd == "dump":
         if args.env_out:
@@ -341,7 +403,7 @@ def main() -> int:
     if args.cmd == "check":
         return do_check(v, steps, vit_steps, members)
     if args.cmd == "fuse":
-        return do_fuse(v, members, args.out)
+        return do_fuse(v, members, per_dir, args.out)
     return do_show(v, steps, vit_steps, cfg)
 
 

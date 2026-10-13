@@ -22,40 +22,48 @@ from inference.retrieval import RetrievalEngine
 
 
 @torch.no_grad()
-def retrieve_for_submission(
+def compute_sim(
     engine: RetrievalEngine,
     query_loader: DataLoader,
     gallery_loader: DataLoader,
     queries: List[Dict],
     gallery: List[Dict],
-    topk: int = 10,
     tta: bool = False,
     rerank: bool = False,
     qe: bool = False,
     cluster: bool = False,
-) -> torch.Tensor:
-    """检索并强制候选模态过滤，返回 (Q, topk) 的 gallery 全局索引（相似度降序）。
+    multiscale: bool = False,
+    ms_weights: tuple = (0.5, 0.3, 0.2),
+    directional: bool = False,
+):
+    """提取特征并计算 (Q, G) 相似度矩阵（提交链路与产物落盘共用）。
 
     Args:
-        tta: 水平翻转 TTA（原图+翻转特征平均）
-        rerank: k-reciprocal 重排序
-        qe: 查询扩展（用 top-1 gallery 特征扩展 query）
-        cluster: Gallery 聚类 + 类别中心检索
+        directional: 方向特异性投影（Phase 4），query 与其目标 gallery 在同一投影空间内
+            计算相似度（O2S 同过 proj_o2s、S2O 同过 proj_s2o），忽略 qe/rerank/cluster
+
+    Returns:
+        (sim, q_feats, g_feats, g_mods)
     """
-    q_feats = engine.extract(query_loader, tta=tta)   # (Q, D)
-    g_feats = engine.extract(gallery_loader, tta=tta)  # (G, D)
-    # 设备统一到特征所在设备（通常为 GPU）：后续 nonzero() 产生的索引张量、
-    # indices 缓冲必须与 sim 同设备，否则 cand[top] 这类"被索引张量与索引张量
-    # 不同设备"的操作会报错。
+    q_feats = engine.extract(
+        query_loader, tta=tta, multiscale=multiscale, ms_weights=ms_weights,
+    )   # (Q, D)
+    g_feats = engine.extract(
+        gallery_loader, tta=tta, multiscale=multiscale, ms_weights=ms_weights,
+    )  # (G, D)
+
+    # 设备统一到特征所在设备
     dev = q_feats.device
     g_mods = torch.as_tensor(
         [MODALITY_ID[g["modality"]] for g in gallery], dtype=torch.long, device=dev
     )
 
-    # 后处理一律按目标候选模态分组执行（关键修复）：
-    # O2O/S2O 的候选模态是 optical、O2S 是 sar；QE/rerank 若在全模态 gallery 上运行，
-    # query 特征会被异模态 gallery 干扰（如光学 query 被 SAR 图扩展/重排），
-    # 正确项被挤出 top1（本地验证 O2O R@1=0 的根因）。
+    # Phase 4：方向特异性投影相似度（query 与目标 gallery 必须同空间投影）
+    if directional and getattr(engine.model, "use_directional", False):
+        sim = _directional_sim(engine, q_feats, g_feats, g_mods, queries)
+        return sim, q_feats, g_feats, g_mods
+
+    # 后处理一律按目标候选模态分组执行
     sim = torch.zeros(q_feats.size(0), g_feats.size(0), device=dev, dtype=torch.float32)
     for mod_id in (0, 1):
         mask = g_mods == mod_id
@@ -74,8 +82,73 @@ def retrieve_for_submission(
             sim[:, cand] = k_reciprocal_rerank(q_work, g_mod_feats, k1=20, k2=6, lambda_value=0.3)
         else:
             sim[:, cand] = torch.matmul(q_work, g_mod_feats.t())
+    return sim, q_feats, g_feats, g_mods
 
-    indices = torch.full((q_feats.size(0), topk), -1, dtype=torch.long, device=dev)
+
+@torch.no_grad()
+def _directional_sim(
+    engine: RetrievalEngine,
+    q_feats: torch.Tensor,
+    g_feats: torch.Tensor,
+    g_mods: torch.Tensor,
+    queries: List[Dict],
+) -> torch.Tensor:
+    """方向特异性相似度（Phase 4）。
+
+    O2S query 与其目标 SAR gallery 同过 proj_o2s 投影后计算相似度；
+    S2O query 与其目标光学 gallery 同过 proj_s2o 投影；O2O 用标准特征。
+    """
+    dh = engine.model.directional_head
+    dev = q_feats.device
+    q_types = [q["query_type"] for q in queries]
+
+    # query 侧按方向投影
+    q_work = q_feats.clone()
+    for qt in ("O2S", "S2O"):
+        rows = [i for i, t in enumerate(q_types) if t == qt]
+        if not rows:
+            continue
+        rt = torch.tensor(rows, dtype=torch.long, device=dev)
+        q_work[rt] = dh.extract_directional(q_feats[rt], qt)
+    q_work = F.normalize(q_work, dim=1)
+
+    # gallery 侧按目标模态投影（O2S 目标=SAR，S2O 目标=光学）
+    sar_idx = (g_mods == 1).nonzero().squeeze(1)
+    opt_idx = (g_mods == 0).nonzero().squeeze(1)
+    g_o2s = (
+        F.normalize(dh.extract_directional(g_feats[sar_idx], "O2S"), dim=1)
+        if sar_idx.numel() else None
+    )
+    g_s2o = (
+        F.normalize(dh.extract_directional(g_feats[opt_idx], "S2O"), dim=1)
+        if opt_idx.numel() else None
+    )
+
+    sim = torch.zeros(q_work.size(0), g_feats.size(0), device=dev, dtype=torch.float32)
+    for qt, cols, gmat in (("O2S", sar_idx, g_o2s), ("S2O", opt_idx, g_s2o)):
+        rows = [i for i, t in enumerate(q_types) if t == qt]
+        if not rows or cols.numel() == 0 or gmat is None:
+            continue
+        rt = torch.tensor(rows, dtype=torch.long, device=dev)
+        sim[rt.unsqueeze(1), cols.unsqueeze(0)] = q_work[rt] @ gmat.t()
+    # O2O（及兜底）：标准特征空间
+    o2o_rows = [i for i, t in enumerate(q_types) if t == "O2O"]
+    if o2o_rows:
+        rt = torch.tensor(o2o_rows, dtype=torch.long, device=dev)
+        sim[rt] = q_work[rt] @ g_feats.t()
+    return sim
+
+
+def indices_from_sim(
+    sim: torch.Tensor,
+    g_mods: torch.Tensor,
+    queries: List[Dict],
+    gallery: List[Dict],
+    topk: int = 10,
+) -> torch.Tensor:
+    """由相似度矩阵取每条 query 的 (topk,) gallery 全局索引（强制模态过滤 + 排除自匹配）。"""
+    dev = sim.device
+    indices = torch.full((sim.size(0), topk), -1, dtype=torch.long, device=dev)
     # gallery 绝对路径（用于排除 query 自身图像；官方 task 无重叠，本地验证协议可能重叠）
     g_paths = [str(Path(g.get("image_path_abs") or g["image_path"]).resolve()) for g in gallery]
     for qi, query in enumerate(queries):
@@ -97,6 +170,42 @@ def retrieve_for_submission(
     return indices
 
 
+@torch.no_grad()
+def retrieve_for_submission(
+    engine: RetrievalEngine,
+    query_loader: DataLoader,
+    gallery_loader: DataLoader,
+    queries: List[Dict],
+    gallery: List[Dict],
+    topk: int = 10,
+    tta: bool = False,
+    rerank: bool = False,
+    qe: bool = False,
+    cluster: bool = False,
+    multiscale: bool = False,
+    ms_weights: tuple = (0.5, 0.3, 0.2),
+    directional: bool = False,
+) -> torch.Tensor:
+    """检索并强制候选模态过滤，返回 (Q, topk) 的 gallery 全局索引（相似度降序）。
+
+    Args:
+        tta: 水平翻转 TTA（原图+翻转特征平均）
+        rerank: k-reciprocal 重排序
+        qe: 查询扩展（用 top-1 gallery 特征扩展 query）
+        cluster: Gallery 聚类 + 类别中心检索
+        multiscale: 多尺度特征融合（全局+中心局部+水平条带）
+        ms_weights: 多尺度权重 (global, center, stripe)
+        directional: 方向特异性投影（Phase 4）
+    """
+    sim, _, _, g_mods = compute_sim(
+        engine, query_loader, gallery_loader, queries, gallery,
+        tta=tta, rerank=rerank, qe=qe, cluster=cluster,
+        multiscale=multiscale, ms_weights=ms_weights,
+        directional=directional,
+    )
+    return indices_from_sim(sim, g_mods, queries, gallery, topk=topk)
+
+
 def build_prediction(
     cfg,
     task_json_path: str,
@@ -110,6 +219,9 @@ def build_prediction(
     rerank: bool = False,
     qe: bool = False,
     cluster: bool = False,
+    multiscale: bool = False,
+    ms_weights: tuple = (0.5, 0.3, 0.2),
+    directional: bool = False,
 ) -> Tuple[Dict[str, List[str]], List[Dict], List[Dict]]:
     """生成提交字典 {query_id: [10 个 gallery image_id]}。"""
     query_loader, gallery_loader, queries, gallery = build_test_loaders(
@@ -119,6 +231,8 @@ def build_prediction(
     indices = retrieve_for_submission(
         engine, query_loader, gallery_loader, queries, gallery, topk,
         tta=tta, rerank=rerank, qe=qe, cluster=cluster,
+        multiscale=multiscale, ms_weights=ms_weights,
+        directional=directional,
     )
 
     prediction: Dict[str, List[str]] = {}
