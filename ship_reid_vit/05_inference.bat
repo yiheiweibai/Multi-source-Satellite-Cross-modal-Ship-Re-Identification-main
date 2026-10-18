@@ -9,6 +9,11 @@ REM   Parses the official task.json (queries + gallery), filters candidates by
 REM   query_type, returns top-10 gallery image_id per query, then self-checks.
 REM Extra args are forwarded, e.g.:  05_inference.bat --qe --cluster
 REM The test task path comes from config\train_vit.yaml, no non-ASCII args here.
+REM NOTE: legacy ship_reid entry with the old post-processing protocol, NOT part
+REM       of the champion submission chain (16_submit_3_shipvit_infer.bat covers
+REM       ship_reid inference now). Its default ckpt
+REM       outputs\checkpoints\best.pth was removed in the 2026-10-18 cleanup;
+REM       re-run 03_train.bat to recreate it.
 REM ============================================================
 set "PY_FILE=%CD%\venv\Scripts\python.exe"
 set "CKPT=outputs\checkpoints\best.pth"

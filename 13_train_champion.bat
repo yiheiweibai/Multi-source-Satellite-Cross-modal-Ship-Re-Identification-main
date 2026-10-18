@@ -1,20 +1,26 @@
 @echo off
 REM ============================================================
-REM 13_train_champion.bat - retrain ALL 8 members of the champion preset final_full
+REM 13_train_champion.bat - retrain the 8 wave-5 full-data members of the champion chain
 REM   Wave-5 full-data retrain (labels.csv = 3534 ids / 7422 images).
-REM   Members (same recipe as the champion, only the train CSV changed):
+REM   The champion (ensemble.active: final_full_b75_cm_dino_nocnxs_dir, 11 members) uses
+REM   6 wave-5 full members; this script rebuilds 5 of them (full_convnext_s was pruned
+REM   in wave 9 and is intentionally NOT retrained here):
 REM     ship_reid (5, ship_reid_vit\venv):
-REM       train_vit_full              -> outputs\full_vit              (champion epoch_100)
-REM       train_convnext_t_full       -> outputs\full_convnext_t       (champion epoch_080)
-REM       train_convnext_s_full       -> outputs\full_convnext_s       (champion epoch_060)
-REM       train_convnext_s_pure_full  -> outputs\full_convnext_s_pure  (champion epoch_040)
-REM       train_swin_s_v2_full        -> outputs\full_swin_s_v2        (champion epoch_060)
-REM     SDF-Net (3, .venv-sdfnet):
+REM       train_vit_full                   -> outputs\full_vit                   (champion epoch_100)
+REM       train_convnext_t_full            -> outputs\full_convnext_t            (champion epoch_080)
+REM       train_convnext_t_strong_cm_full  -> outputs\full_convnext_t_strong_cm  (champion epoch_080)
+REM       train_convnext_s_pure_full       -> outputs\full_convnext_s_pure       (champion epoch_040)
+REM       train_swin_s_v2_full             -> outputs\full_swin_s_v2             (champion epoch_060)
+REM     SDF-Net (2 configs -> 3 champion ckpts, .venv-sdfnet):
 REM       configs\SDF-Net-full.yml      -> logs\SDF-Net-full      (champion transformer_45 / _25)
 REM       configs\SDF-Net-mos-full.yml  -> logs\SDF-Net-mos-full  (champion transformer_75)
 REM
+REM   NOT covered here (produced by earlier waves, already on disk; see README §2):
+REM     sdfnet_base75                    - teammate ab75 checkpoint (D: drive), pred-only locally
+REM     ship_reid_dinov2_b_ep040 / _ep060 - screen (2828-identity) checkpoints
+REM
 REM   Resumable: each member is skipped when its champion checkpoint already exists.
-REM   ship_reid members additionally resume from outputs\<dir>\last.pth when present.
+REM   ship_reid members additionally resume from outputs\<dir>\checkpoints\last.pth when present.
 REM   Prerequisites: ship_reid_vit\venv (ship_reid_vit\01_setup.bat) and
 REM                  .venv-sdfnet + SDF-Net\data\HOSS (12_sdfnet_setup.bat).
 REM   Note: full-data members have seen every identity, so there is NO leak-free
@@ -45,7 +51,8 @@ if not exist "%VIT_PY%" (
 )
 if not exist "%SDF_PY%" (
     echo [13] ERROR: SDF-Net venv not found: %SDF_PY%
-    echo      run 12_sdfnet_setup.bat first.
+    echo      run 12_sdfnet_setup.bat first. If .venv-sdfnet exists but has no Scripts folder
+    echo      ^(truncated install^), delete it and re-run 12_sdfnet_setup.bat.
     pause
     exit /b 1
 )
@@ -62,14 +69,14 @@ echo.
 echo [13] ---- Part 1/2: ship_reid members ----
 cd /d "%VIT_DIR%"
 
-call :train_vit train_vit_full              full_vit              epoch_100.pth
-call :train_vit train_convnext_t_full       full_convnext_t       epoch_080.pth
-call :train_vit train_convnext_s_full       full_convnext_s       epoch_060.pth
-call :train_vit train_convnext_s_pure_full  full_convnext_s_pure  epoch_040.pth
-call :train_vit train_swin_s_v2_full        full_swin_s_v2        epoch_060.pth
+call :train_vit train_vit_full                   full_vit                   epoch_100.pth
+call :train_vit train_convnext_t_full            full_convnext_t            epoch_080.pth
+call :train_vit train_convnext_t_strong_cm_full  full_convnext_t_strong_cm  epoch_080.pth
+call :train_vit train_convnext_s_pure_full       full_convnext_s_pure       epoch_040.pth
+call :train_vit train_swin_s_v2_full             full_swin_s_v2             epoch_060.pth
 
 REM ============================================================
-REM Part 2 - SDF-Net members (3), cwd must be SDF-Net
+REM Part 2 - SDF-Net members (2 configs -> transformer_25/45/75), cwd must be SDF-Net
 REM ============================================================
 echo.
 echo [13] ---- Part 2/2: SDF-Net members ----
@@ -125,7 +132,7 @@ if exist "outputs\%~2\checkpoints\%~3" (
     goto :eof
 )
 set "RES="
-if exist "outputs\%~2\last.pth" set "RES=--resume auto"
+if exist "outputs\%~2\checkpoints\last.pth" set "RES=--resume auto"
 echo [13] training %~1 ...
 "%VIT_PY%" train.py --config "config\%~1.yaml" !RES!
 if errorlevel 1 (

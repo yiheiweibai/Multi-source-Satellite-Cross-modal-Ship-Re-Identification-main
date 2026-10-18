@@ -12,7 +12,9 @@ echo ================================================================
 echo.
 
 if not exist "%PY%" (
-    echo [ERROR] .venv-sdfnet not found: %PY%
+    echo [ERROR] .venv-sdfnet python not found: %PY%
+    echo         Run 12_sdfnet_setup.bat first. If .venv-sdfnet exists but has no
+    echo         Scripts folder, delete it and re-run 12_sdfnet_setup.bat.
     pause
     exit /b 1
 )
@@ -34,9 +36,9 @@ echo        recipe = %RRF_MEMBERS%
 echo        out    = %OUT_PRED%
 echo.
 echo      Override at run time, e.g.:
-echo        17_submit_4_rrf_fuse.bat --preset anchor_plus_sv
-echo        17_submit_4_rrf_fuse.bat --weights 1 1 1 1 1 0.5 0.75 1
-echo        ^(weight count must match the active preset: final=8 members^)
+echo        17_submit_4_rrf_fuse.bat --preset final_full_b75_cm_dino_nocnxs
+echo        17_submit_4_rrf_fuse.bat --weights 1 1 1 1 0.5 1 0.75 1 1 1 1
+echo        ^(weight count must match the active preset: final_full_b75_cm_dino_nocnxs_dir = 11 members^)
 echo.
 
 REM members/weights stay inside Python (cmd would re-parse embedded quotes)

@@ -422,8 +422,12 @@ ensemble:
 
     # 波次6：队友 base75 互补成员（ab75 配方，本地验证综合 0.5985）
     #   pred 为 test 集 top-100 排名（267×100 无重复）；sim 备份 sims/test_base75_sim.pt
+    #   ckpt 置空（2026-10-18）：权重在队友 D 盘、本机不存在。
+    #     置空后 15 号不再尝试推理该成员，14 号环境自检不再报 MISS，改由 pred 存在性把关。
+    #   队友原始 ckpt 路径备查：
+    #     D:/Projects/Multi-source Satellite Cross-modal Ship Re-Identification/ship_reid_system/outputs/ab75/base75_best.pth
     - name: sdfnet_base75
-      ckpt: D:/Projects/Multi-source Satellite Cross-modal Ship Re-Identification/ship_reid_system/outputs/ab75/base75_best.pth
+      ckpt: ""
       pred: sims/test/top100_base75.json
 
     # ---- 波次8：DINOv2-B 缩水模型（2828 身份，三重门槛已过）----

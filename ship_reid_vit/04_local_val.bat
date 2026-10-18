@@ -9,6 +9,10 @@ REM   1) predict on local validation protocol (TTA + k-reciprocal rerank)
 REM   2) score O2S / S2O / O2O and the weighted overall score
 REM Prerequisite: 02_prepare_data.bat and 03_train.bat have been run.
 REM Local val paths come from config\train_vit.yaml, no non-ASCII args here.
+REM NOTE: legacy 2828-identity entry, NOT part of the champion submission chain
+REM       (that chain is 14~18_submit_*.bat). Its default ckpt
+REM       outputs\checkpoints\best.pth was removed in the 2026-10-18 cleanup;
+REM       re-run 03_train.bat to recreate it.
 REM ============================================================
 set "PY_FILE=%CD%\venv\Scripts\python.exe"
 set "CKPT=outputs\checkpoints\best.pth"

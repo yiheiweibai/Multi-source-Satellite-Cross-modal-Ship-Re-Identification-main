@@ -12,7 +12,9 @@ echo ================================================================
 echo.
 
 if not exist "%PY%" (
-    echo [ERROR] .venv-sdfnet not found: %PY%
+    echo [ERROR] .venv-sdfnet python not found: %PY%
+    echo         Run 12_sdfnet_setup.bat first. If .venv-sdfnet exists but has no
+    echo         Scripts folder, delete it and re-run 12_sdfnet_setup.bat.
     pause
     exit /b 1
 )

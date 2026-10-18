@@ -3,6 +3,8 @@
 面向 **2026 全国大数据与计算智能挑战赛 赛题06「多源卫星跨模态舰船重识别」** 的可运行工程化代码框架。
 
 > **双路线并行**：本仓库自研框架 + TransOSS（ICCV 2025 SOTA）微调。两路推理均叠加 TTA/K-reciprocal/Gallery 聚类后处理，用本地验证协议对比增益。
+>
+> ⚠️ **历史存档（已过期）**：本文是**清理前**的工程框架文档，描述的是 `ship_reid_system/` 时代的目录布局与「自研 + TransOSS 双路线」。`ship_reid_system/` 已扁平化为 `Multi-source-Satellite-Cross-modal-Ship-Re-Identification-main/`，TransOSS 双路线及其 `01~11_transoss_*.bat`、`transoss_*` 脚本等已全部删除。**现行复现指南见同目录 `README.md`**（本文件仅作历史留档）。
 
 ## 1. 项目结构
 
